@@ -16,14 +16,27 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown(
+    """
+    <style>
+    .stMetric {
+        background-color: #161920;
+        border: 1px solid #2b2f3a;
+        padding: 10px 14px;
+        border-radius: 8px;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
 # ==============================================================================
-# LOCAL DATABASE FOR SIGNAL HISTORY & WIN RATE
+# LOCAL DATABASE (Signal History & Win Rate)
 # ==============================================================================
 DB_PATH = "signals.db"
 
 
 def init_db():
-  """Initializes the local SQLite database to log signals and track win rates."""
   with sqlite3.connect(DB_PATH) as conn:
     cursor = conn.cursor()
     cursor.execute("""
@@ -34,7 +47,7 @@ def init_db():
                 signal TEXT,
                 entry_price REAL,
                 exit_price REAL,
-                status TEXT, -- 'OPEN', 'WIN', 'LOSS'
+                status TEXT,
                 pnl_pct REAL,
                 conviction TEXT
             )
@@ -43,29 +56,29 @@ def init_db():
 
 
 def log_or_update_signals(actionable_signals, all_mids):
-  """Logs new consensus signals and updates open signals against current prices."""
   init_db()
   with sqlite3.connect(DB_PATH) as conn:
     cursor = conn.cursor()
 
-    # 1. Update any existing 'OPEN' signals
-    cursor.execute("SELECT id, coin, signal, entry_price FROM signal_history WHERE status = 'OPEN'")
-    open_signals = cursor.fetchall()
-
-    for sig_id, coin, sig_type, entry_px in open_signals:
+    # Update OPEN signals
+    cursor.execute(
+        "SELECT id, coin, signal, entry_price FROM signal_history WHERE status"
+        " = 'OPEN'"
+    )
+    for sig_id, coin, sig_type, entry_px in cursor.fetchall():
       curr_px = float(all_mids.get(coin, 0))
       if curr_px == 0:
         continue
 
       if "LONG" in sig_type:
         pnl = ((curr_px - entry_px) / entry_px) * 100
-        if pnl >= 2.0:  # 2.0% Take Profit
+        if pnl >= 2.0:
           cursor.execute(
               "UPDATE signal_history SET status = 'WIN', exit_price = ?,"
               " pnl_pct = ? WHERE id = ?",
               (curr_px, pnl, sig_id),
           )
-        elif pnl <= -1.5:  # 1.5% Stop Loss
+        elif pnl <= -1.5:
           cursor.execute(
               "UPDATE signal_history SET status = 'LOSS', exit_price = ?,"
               " pnl_pct = ? WHERE id = ?",
@@ -73,60 +86,53 @@ def log_or_update_signals(actionable_signals, all_mids):
           )
       elif "SHORT" in sig_type:
         pnl = ((entry_px - curr_px) / entry_px) * 100
-        if pnl >= 2.0:  # 2.0% Take Profit
+        if pnl >= 2.0:
           cursor.execute(
               "UPDATE signal_history SET status = 'WIN', exit_price = ?,"
               " pnl_pct = ? WHERE id = ?",
               (curr_px, pnl, sig_id),
           )
-        elif pnl <= -1.5:  # 1.5% Stop Loss
+        elif pnl <= -1.5:
           cursor.execute(
               "UPDATE signal_history SET status = 'LOSS', exit_price = ?,"
               " pnl_pct = ? WHERE id = ?",
               (curr_px, pnl, sig_id),
           )
 
-    # 2. Add new signals if not already logged recently (within last 6 hours)
+    # Log new signals
     for sig in actionable_signals:
       coin = sig["Coin"]
       sig_type = sig["Signal"]
       curr_px = float(all_mids.get(coin, 0))
-      conviction = sig["Conviction"]
-
       if curr_px > 0:
         cursor.execute(
             "SELECT id FROM signal_history WHERE coin = ? AND status = 'OPEN'",
             (coin,),
         )
-        existing = cursor.fetchone()
-        if not existing:
+        if not cursor.fetchone():
           now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
           cursor.execute(
               """
                         INSERT INTO signal_history (timestamp, coin, signal, entry_price, exit_price, status, pnl_pct, conviction)
                         VALUES (?, ?, ?, ?, ?, 'OPEN', 0.0, ?)
                     """,
-              (now_str, coin, sig_type, curr_px, curr_px, conviction),
+              (now_str, coin, sig_type, curr_px, curr_px, sig["Conviction"]),
           )
-
     conn.commit()
 
 
 def get_performance_data():
-  """Retrieves logged signals and computes win rate metrics."""
   init_db()
   with sqlite3.connect(DB_PATH) as conn:
-    df = pd.read_sql_query(
+    return pd.read_sql_query(
         "SELECT * FROM signal_history ORDER BY id DESC", conn
     )
-  return df
 
 
 # ==============================================================================
 # 100 TOP CONSISTENT HYPERLIQUID WALLETS
 # ==============================================================================
 DEFAULT_100_WALLETS = [
-    # Top 100 on-chain traders & vaults
     "0xa312114b5795dff9b8db50474dd57701aa78ad1e",
     "0x5078c2fbea2b2ad61bc840bc023e35fce56bedb6",
     "0xb317d2bc2d3d2df5fa441b5bae0ab9d8b07283ae",
@@ -231,20 +237,31 @@ DEFAULT_100_WALLETS = [
 
 
 # ==============================================================================
-# FAST PARALLEL DATA FETCHER
+# FAST DATA RETRIEVAL (Includes Value & Exact Price Calculations)
 # ==============================================================================
-def scan_single_wallet(info, address):
+def scan_single_wallet(info, address, all_mids):
   positions = []
   try:
     state = info.user_state(address)
     for item in state.get("assetPositions", []):
       pos = item.get("position", {})
       size = float(pos.get("szi", 0))
+
       if size != 0:
         coin = pos.get("coin")
         side = "LONG" if size > 0 else "SHORT"
         entry_px = float(pos.get("entryPx", 0))
+        curr_px = float(all_mids.get(coin, entry_px))
         pnl = float(pos.get("unrealizedPnl", 0))
+
+        # Position Value (Notional USD Size)
+        position_value = abs(size) * curr_px
+        roi_pct = (
+            (pnl / (abs(size) * entry_px) * 100)
+            if entry_px > 0 and size != 0
+            else 0.0
+        )
+
         leverage = pos.get("leverage", {}).get("value", "Cross")
 
         positions.append({
@@ -254,7 +271,10 @@ def scan_single_wallet(info, address):
             "Side": side,
             "Size": abs(size),
             "Entry Price": entry_px,
+            "Current Price": curr_px,
+            "Position Value ($)": position_value,
             "Unrealized PnL ($)": pnl,
+            "ROI (%)": roi_pct,
             "Leverage": f"{leverage}x"
             if isinstance(leverage, (int, float))
             else str(leverage),
@@ -277,7 +297,9 @@ def fetch_hyperliquid_data(wallet_list):
 
   with ThreadPoolExecutor(max_workers=8) as executor:
     results = list(
-        executor.map(lambda addr: scan_single_wallet(info, addr), wallet_list)
+        executor.map(
+            lambda addr: scan_single_wallet(info, addr, all_mids), wallet_list
+        )
     )
 
   for res in results:
@@ -293,7 +315,7 @@ def fetch_hyperliquid_data(wallet_list):
 # ==============================================================================
 with st.sidebar:
   st.header("⚙️ Radar Controls")
-  min_traders = st.slider("Min Whales in Position", 1, 10, 2)
+  min_traders = st.slider("Min Whales in Position", 1, 10, 1)
   consensus_threshold = (
       st.slider("Consensus Threshold (%)", 50, 100, 60) / 100
   )
@@ -304,12 +326,12 @@ with st.sidebar:
     st.rerun()
 
   st.divider()
-  st.caption(f"Tracking {len(DEFAULT_100_WALLETS)} on-chain accounts.")
+  st.caption(f"Tracking {len(DEFAULT_100_WALLETS)} verified on-chain whales.")
 
 # ==============================================================================
-# DATA PROCESSING & SIGNAL LOGGING
+# DATA LOAD & CONSENSUS AGGREGATION
 # ==============================================================================
-with st.spinner("Scanning 100 whales and checking signal outcomes..."):
+with st.spinner("Scanning 100 whales and computing trade metrics..."):
   mids, df_positions, active_count = fetch_hyperliquid_data(DEFAULT_100_WALLETS)
 
 if hide_exotics and not df_positions.empty:
@@ -317,54 +339,65 @@ if hide_exotics and not df_positions.empty:
       df_positions["Coin"].isin(["BTC", "ETH", "SOL", "HYPE"])
   ]
 
-# Generate consensus signals
+# Aggregate Sentiment & Details for EACH Active Coin
+coin_summaries = []
 actionable_signals = []
-summary = []
 
 if not df_positions.empty:
   for coin, group in df_positions.groupby("Coin"):
-    total_in_coin = len(group)
+    total_whales = len(group)
     longs = len(group[group["Side"] == "LONG"])
     shorts = len(group[group["Side"] == "SHORT"])
+
+    total_value = group["Position Value ($)"].sum()
     total_pnl = group["Unrealized PnL ($)"].sum()
+    avg_entry = group["Entry Price"].mean()
+    curr_px = float(mids.get(coin, avg_entry))
 
-    long_ratio = longs / total_in_coin
-    short_ratio = shorts / total_in_coin
+    group_roi = (
+        (total_pnl / (total_value - total_pnl) * 100)
+        if (total_value - total_pnl) > 0
+        else 0.0
+    )
+
+    long_ratio = longs / total_whales
+    short_ratio = shorts / total_whales
     conviction = max(long_ratio, short_ratio)
-    signal = "NEUTRAL"
 
-    if total_in_coin >= min_traders:
-      if long_ratio >= consensus_threshold:
-        signal = "STRONG LONG 🟢"
-        actionable_signals.append(
-            {"Coin": coin, "Signal": signal, "Conviction": f"{conviction*100:.0f}%"}
-        )
-      elif short_ratio >= consensus_threshold:
-        signal = "STRONG SHORT 🔴"
-        actionable_signals.append(
-            {"Coin": coin, "Signal": signal, "Conviction": f"{conviction*100:.0f}%"}
-        )
+    if long_ratio >= consensus_threshold and total_whales >= min_traders:
+      signal_label = "STRONG LONG 🟢"
+      actionable_signals.append(
+          {"Coin": coin, "Signal": signal_label, "Conviction": f"{conviction*100:.0f}%"}
+      )
+    elif short_ratio >= consensus_threshold and total_whales >= min_traders:
+      signal_label = "STRONG SHORT 🔴"
+      actionable_signals.append(
+          {"Coin": coin, "Signal": signal_label, "Conviction": f"{conviction*100:.0f}%"}
+      )
+    else:
+      signal_label = "NEUTRAL ⚪"
 
-    summary.append({
+    coin_summaries.append({
         "Coin": coin,
-        "Current Price": f"${float(mids.get(coin, 0)):,.2f}"
-        if coin in mids
-        else "-",
-        "Signal": signal,
-        "Conviction": f"{conviction * 100:.0f}%",
-        "Active Whales": total_in_coin,
-        "Long / Short": f"{longs}L / {shorts}S",
-        "Combined PnL": f"${total_pnl:,.2f}",
+        "Current Price": f"${curr_px:,.2f}",
+        "Avg Entry": f"${avg_entry:,.2f}",
+        "Signal": signal_label,
+        "Whales in Trade": f"{total_whales} ({longs}L / {shorts}S)",
+        "Total Volume ($)": f"${total_value:,.2f}",
+        "Group PnL ($)": f"${total_pnl:+,.2f}",
+        "Group ROI (%)": f"{group_roi:+.2f}%",
+        "Raw_Volume": total_value,  # For sorting
+        "Raw_Whales": total_whales,
     })
 
-# Automatically log actionable signals & evaluate performance in SQLite
+# Auto-log signals for performance tracking
 log_or_update_signals(actionable_signals, mids)
 df_history = get_performance_data()
 
 # ==============================================================================
 # MAIN TABS INTERFACE
 # ==============================================================================
-st.title("⚡ Hyperliquid Smart Money Radar & Performance")
+st.title("⚡ Hyperliquid Smart Money Radar")
 
 tab1, tab2 = st.tabs(
     ["⚡ Live Whale Radar", "📜 Signal History & Success Rate"]
@@ -378,39 +411,102 @@ with tab1:
   btc_px = float(mids.get("BTC", 0))
   eth_px = float(mids.get("ETH", 0))
 
-  col1.metric("Wallets Monitored", f"{len(DEFAULT_100_WALLETS)}")
-  col2.metric("Whales Active in Market", f"{active_count} Traders")
-  col3.metric("BTC Price", f"${btc_px:,.1f}" if btc_px else "Loading...")
-  col4.metric("ETH Price", f"${eth_px:,.1f}" if eth_px else "Loading...")
+  total_deployed = (
+      df_positions["Position Value ($)"].sum() if not df_positions.empty else 0
+  )
+  net_pnl = (
+      df_positions["Unrealized PnL ($)"].sum() if not df_positions.empty else 0
+  )
+
+  col1.metric("Whales Active in Market", f"{active_count} Traders")
+  col2.metric("Total Whale Volume", f"${total_deployed:,.0f}")
+  col3.metric("Net Whale PnL", f"${net_pnl:+,.0f}")
+  col4.metric("BTC Price", f"${btc_px:,.1f}" if btc_px else "Loading...")
 
   st.divider()
-  st.subheader("🎯 High-Conviction Consensus Signals")
 
-  if not actionable_signals:
-    st.info(
-        f"No coins currently reach {int(consensus_threshold*100)}% consensus"
-        f" with {min_traders}+ whales."
-    )
+  # High-Level Cards for Top Active Coins
+  st.subheader("📊 Active Coin Breakdown & Whale Sentiment")
+
+  if not coin_summaries:
+    st.info("No active whale positions found right now.")
   else:
-    cols = st.columns(min(len(actionable_signals), 4))
-    for idx, sig in enumerate(actionable_signals):
-      with cols[idx % 4]:
-        st.success(
-            f"### **{sig['Coin']}**\n**{sig['Signal']}**\n\n• **Conviction:**"
-            f" {sig['Conviction']}"
-        )
+    # Sort by coins with the highest whale position value
+    sorted_summaries = sorted(
+        coin_summaries, key=lambda x: x["Raw_Volume"], reverse=True
+    )
 
-  with st.expander("📊 Complete Asset Sentiment Table", expanded=True):
-    if summary:
-      st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
+    # Display Top 4 Coins in Cards
+    top_cards = sorted_summaries[:4]
+    card_cols = st.columns(len(top_cards))
+
+    for idx, c in enumerate(top_cards):
+      with card_cols[idx]:
+        st.markdown(f"### **{c['Coin']}** ({c['Signal']})")
+        st.markdown(f"**🐋 Whales:** `{c['Whales in Trade']}`")
+        st.markdown(f"**🎯 Avg Entry:** `{c['Avg Entry']}`")
+        st.markdown(f"**📈 Current Px:** `{c['Current Price']}`")
+        st.markdown(f"**💰 Total Volume:** `{c['Total Volume ($)']}`")
+        st.markdown(f"**💵 Group PnL:** `{c['Group PnL ($)']} ({c['Group ROI (%)']})`")
+
+    # Complete Summary Table
+    st.markdown("#### All Active Assets Table")
+    df_overview = pd.DataFrame(sorted_summaries).drop(
+        columns=["Raw_Volume", "Raw_Whales"]
+    )
+    st.dataframe(df_overview, use_container_width=True, hide_index=True)
 
   st.divider()
+
+  # Detailed Individual Positions Table
   st.subheader("🐋 Individual Open Positions")
+
   if not df_positions.empty:
     coins = sorted(df_positions["Coin"].unique())
-    selected_coins = st.multiselect("Filter by Asset", options=coins, default=coins[:5])
-    filtered_df = df_positions[df_positions["Coin"].isin(selected_coins)]
-    st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+    selected_coins = st.multiselect(
+        "Filter by Asset", options=coins, default=coins[:5]
+    )
+
+    filtered_df = df_positions[df_positions["Coin"].isin(selected_coins)].copy()
+
+    # Format numbers for clean display
+    filtered_df["Entry Price"] = filtered_df["Entry Price"].apply(
+        lambda x: f"${x:,.2f}"
+    )
+    filtered_df["Current Price"] = filtered_df["Current Price"].apply(
+        lambda x: f"${x:,.2f}"
+    )
+    filtered_df["Position Value ($)"] = filtered_df["Position Value ($)"].apply(
+        lambda x: f"${x:,.2f}"
+    )
+    filtered_df["Unrealized PnL ($)"] = filtered_df["Unrealized PnL ($)"].apply(
+        lambda x: f"${x:+,.2f}"
+    )
+    filtered_df["ROI (%)"] = filtered_df["ROI (%)"].apply(lambda x: f"{x:+.2f}%")
+
+    st.dataframe(
+        filtered_df[[
+            "Wallet",
+            "Coin",
+            "Side",
+            "Entry Price",
+            "Current Price",
+            "Position Value ($)",
+            "Unrealized PnL ($)",
+            "ROI (%)",
+            "Leverage",
+        ]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    csv = filtered_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📥 Download Positions as CSV",
+        csv,
+        "whale_positions.csv",
+        "text/csv",
+    )
 
 # ------------------------------------------------------------------------------
 # TAB 2: SIGNAL HISTORY & SUCCESS RATE
@@ -421,31 +517,23 @@ with tab2:
   if df_history.empty:
     st.info(
         "No historical signals logged yet. When a consensus signal triggers,"
-        " it will be recorded here automatically."
+        " it will appear here automatically."
     )
   else:
-    total_signals = len(df_history)
     wins = len(df_history[df_history["status"] == "WIN"])
     losses = len(df_history[df_history["status"] == "LOSS"])
     open_trades = len(df_history[df_history["status"] == "OPEN"])
 
-    closed_trades = wins + losses
-    win_rate = (wins / closed_trades * 100) if closed_trades > 0 else 0.0
+    closed = wins + losses
+    win_rate = (wins / closed * 100) if closed > 0 else 0.0
 
-    # Metric Cards
-    h_col1, h_col2, h_col3, h_col4 = st.columns(4)
-    h_col1.metric("Win Rate (%)", f"{win_rate:.1f}%")
-    h_col2.metric("Total Wins ✅", f"{wins}")
-    h_col3.metric("Total Losses ❌", f"{losses}")
-    h_col4.metric("Active / Open Trades ⏳", f"{open_trades}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Win Rate (%)", f"{win_rate:.1f}%")
+    c2.metric("Total Wins ✅", f"{wins}")
+    c3.metric("Total Losses ❌", f"{losses}")
+    c4.metric("Active / Open Trades ⏳", f"{open_trades}")
 
-    st.caption(
-        "Trades target a **+2.0% Take Profit (WIN)** or **-1.5% Stop Loss"
-        " (LOSS)**."
-    )
-    st.divider()
-
-    # Formatted History Table
+    st.caption("Target: +2.0% Take Profit (WIN) | -1.5% Stop Loss (LOSS)")
     st.dataframe(
         df_history[[
             "timestamp",
