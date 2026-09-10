@@ -551,6 +551,23 @@ log_or_update_signals(actionable_signals, mids, webhook_url=discord_webhook)
 df_history = get_performance_data()
 
 # ==============================================================================
+# SLIDER-AWARE FILTERING (Directly connects Sidebar controls to the Top Setups)
+# ==============================================================================
+eligible_trades = [
+    c
+    for c in coin_summaries
+    if c["Raw_Whales"] >= min_traders
+    and c["Raw_Conviction"] >= consensus_threshold
+]
+
+# Update sidebar live feedback
+with st.sidebar:
+  st.markdown(
+      f"**Filter Status:** `{len(eligible_trades)} of {len(coin_summaries)}`"
+      " coins match your criteria."
+  )
+
+# ==============================================================================
 # MAIN DASHBOARD INTERFACE
 # ==============================================================================
 st.title("⚡ Hyperliquid Smart Money Radar")
@@ -576,20 +593,24 @@ with tab1:
   st.divider()
 
   # ==========================================================================
-  # SECTION 1: TOP 3 BEST LOOKING SETUPS (COIN CONSENSUS)
+  # SECTION 1: TOP 3 BEST LOOKING SETUPS (FILTERED BY SLIDERS)
   # ==========================================================================
   st.subheader("🔥 Top 3 Best-Looking Whale Setups")
   st.caption(
-      "Highest quality consensus setups with direct one-click trade access on"
-      " Hyperliquid."
+      f"Filtering for coins with **at least {min_traders} Whale(s)** and **≥"
+      f" {int(consensus_threshold*100)}% Consensus**."
   )
 
   best_trades = []
-  if not coin_summaries:
-    st.info("No active whale positions detected at the moment.")
+  if not eligible_trades:
+    st.warning(
+        f"⚠️ No active coins currently meet your criteria (Requires ≥"
+        f" {min_traders} Whale(s) with ≥ {int(consensus_threshold*100)}%"
+        " Consensus). Try adjusting your sidebar sliders."
+    )
   else:
     best_trades = sorted(
-        coin_summaries, key=lambda x: x["Quality_Score"], reverse=True
+        eligible_trades, key=lambda x: x["Quality_Score"], reverse=True
     )[:3]
     top_cols = st.columns(len(best_trades))
 
@@ -628,15 +649,13 @@ with tab1:
   st.markdown("#### 📈 Live Technical Price Chart")
 
   active_coins = ["BTC", "ETH", "SOL"]
-  if best_trades:
-    active_coins.extend(
-        [t["Coin"] for t in best_trades if t.get("Coin") and str(t["Coin"])]
-    )
-  if not df_positions.empty and "Coin" in df_positions.columns:
+  if eligible_trades:
     active_coins.extend([
-        str(c)
-        for c in df_positions["Coin"].dropna().unique()
-        if c and str(c).strip()
+        t["Coin"] for t in eligible_trades if t.get("Coin") and str(t["Coin"])
+    ])
+  elif coin_summaries:
+    active_coins.extend([
+        t["Coin"] for t in coin_summaries if t.get("Coin") and str(t["Coin"])
     ])
 
   active_coins = sorted(list(set(active_coins)))
@@ -687,7 +706,6 @@ with tab1:
       </script>
     </div>
     """
-  # Corrected: components.html does not take a key parameter
   components.html(tv_widget, height=430)
 
   st.divider()
@@ -746,6 +764,16 @@ with tab1:
   # ==========================================================================
   st.subheader("📊 Complete Whale Portfolio Breakdown")
   if coin_summaries:
+    for c in coin_summaries:
+      c["Filter Status"] = (
+          "✅ Qualified"
+          if (
+              c["Raw_Whales"] >= min_traders
+              and c["Raw_Conviction"] >= consensus_threshold
+          )
+          else "⚪ Below Filter"
+      )
+
     df_overview = pd.DataFrame(
         sorted(
             coin_summaries,
@@ -757,7 +785,7 @@ with tab1:
         c
         for c in [
             "Coin",
-            "Trade_URL",
+            "Filter Status",
             "Majority Side",
             "Quality_Score",
             "Current Price",
@@ -766,6 +794,7 @@ with tab1:
             "Total Volume ($)",
             "Group PnL ($)",
             "Group ROI (%)",
+            "Trade_URL",
         ]
         if c in df_overview.columns
     ]
