@@ -195,22 +195,6 @@ def init_db():
                 conviction TEXT
             )
         """)
-    cursor.execute("""
-            CREATE TABLE IF NOT EXISTS weekly_trade_archive (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                week_id TEXT,
-                coin TEXT,
-                side TEXT,
-                trader_label TEXT,
-                wallet TEXT,
-                entry_price REAL,
-                current_price REAL,
-                position_value REAL,
-                pnl REAL,
-                roi REAL,
-                timestamp TEXT
-            )
-        """)
     conn.commit()
 
 
@@ -711,7 +695,7 @@ with tab1:
   st.divider()
 
   # ==========================================================================
-  # NEW FEATURE: TOP PROFIT DRIVERS OF THE WEEK (ROTATING WEEKLY)
+  # TOP PROFIT DRIVERS OF THE WEEK (ROTATING WEEKLY)
   # ==========================================================================
   current_week_code, current_week_title = get_current_week_id()
 
@@ -723,11 +707,11 @@ with tab1:
   )
 
   # Top 5 vs Top 10 Toggle
-  prof_view_col1, prof_view_col2 = st.columns()
+  prof_view_col1, prof_view_col2 = st.columns(2)
   with prof_view_col1:
     top_limit = st.radio(
         "Display Range:",
-       ,
+        options=,
         index=0,
         horizontal=True,
         key="weekly_rank_limit",
