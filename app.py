@@ -23,7 +23,15 @@ st.markdown(
         background: linear-gradient(135deg, #18202f 0%, #151821 100%);
         border: 1px solid #3b82f6;
         border-radius: 12px;
-        padding: 18px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+    .trader-trade-card {
+        background: linear-gradient(135deg, #241e17 0%, #17181c 100%);
+        border: 1px solid #f59e0b;
+        border-radius: 12px;
+        padding: 16px;
         margin-bottom: 12px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
     }
@@ -45,6 +53,18 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+# Known Elite Wallet Labels
+ELITE_WALLETS = {
+    "0xa312114b5795dff9b8db50474dd57701aa78ad1e": "👑 All-Time #1 Legend ($95M+ PnL)",
+    "0x5078c2fbea2b2ad61bc840bc023e35fce56bedb6": "🐋 High-Volume Perps Whale",
+    "0xb317d2bc2d3d2df5fa441b5bae0ab9d8b07283ae": "💎 Multi-Million Trend Trader",
+    "0xa697a5b929cca9b3f8a78c4e4af1848506c06022": "🏛️ Institutional Quant Fund",
+    "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303": "🏆 Top Public Vault Leader",
+    "0x4010892c55452d50cb68b556efc5fa624d62b172": "🎯 Elite Swing Specialist",
+    "0x1807f6ca9b332ea5ccda3a254c84bdf90e412c5a": "⚡ Core Perps Whale (BTC/ETH)",
+    "0x20c2d95a3dfdca9e9ad12794d5fa6fad99da44f5": "🛡️ Low-Drawdown Trend Follower",
+}
 
 # ==============================================================================
 # LOCAL DATABASE
@@ -231,9 +251,14 @@ def scan_single_wallet(info, address, all_mids):
         )
         leverage = pos.get("leverage", {}).get("value", "Cross")
 
+        trader_label = ELITE_WALLETS.get(
+            address, f"Trader {address[:6]}...{address[-4:]}"
+        )
+
         positions.append({
             "Wallet": f"{address[:6]}...{address[-4:]}",
             "Full Address": address,
+            "Trader Label": trader_label,
             "Coin": coin,
             "Side": side,
             "Size": abs(size),
@@ -278,29 +303,24 @@ def fetch_hyperliquid_data(wallet_list):
 
 
 # ==============================================================================
-# TRADE QUALITY SCORING ALGORITHM
+# TRADE QUALITY SCORING ALGORITHM (Coin Level)
 # ==============================================================================
 def score_trade_quality(c):
-  """Evaluates trade health based on ROI, conviction, volume, and drawdown risk."""
   score = 50.0
-
-  # 1. Profitability (Heavily penalizes deep drawdowns, rewards green trades)
   roi = c["Raw_ROI"]
-  if roi >= 0:
-    score += min(roi * 4.0, 30.0)  # Up to +30 for green trades
-  else:
-    score += max(roi * 2.5, -45.0)  # Down to -45 for underwater trades
 
-  # 2. Whale Conviction (100% agreement gets +15)
+  if roi >= 0:
+    score += min(roi * 4.0, 30.0)
+  else:
+    score += max(roi * 2.5, -45.0)
+
   score += (c["Raw_Conviction"] - 0.5) * 30.0
 
-  # 3. Capital Weight
   if c["Raw_Volume"] >= 500000:
     score += 8.0
   elif c["Raw_Volume"] >= 100000:
     score += 4.0
 
-  # 4. Multi-Whale Alignment Bonus
   if c["Raw_Whales"] >= 2 and c["Raw_Conviction"] >= 0.80:
     score += 10.0
 
@@ -323,12 +343,12 @@ with st.sidebar:
     st.rerun()
 
   st.divider()
-  st.caption("Auto-refreshes data every 60s from Hyperliquid L1.")
+  st.caption("Live feed from Hyperliquid L1 (auto-updates every 60s).")
 
 # ==============================================================================
-# DATA RETRIEVAL & PROCESSING
+# DATA LOAD & PROCESSING
 # ==============================================================================
-with st.spinner("Analyzing whale positioning and trade quality..."):
+with st.spinner("Analyzing whale positioning & elite trader plays..."):
   mids, df_positions, active_count = fetch_hyperliquid_data(DEFAULT_100_WALLETS)
 
 if hide_exotics and not df_positions.empty:
@@ -391,7 +411,7 @@ log_or_update_signals(actionable_signals, mids)
 df_history = get_performance_data()
 
 # ==============================================================================
-# MAIN INTERFACE
+# MAIN DASHBOARD INTERFACE
 # ==============================================================================
 st.title("⚡ Hyperliquid Smart Money Radar")
 
@@ -400,7 +420,7 @@ tab1, tab2 = st.tabs(
 )
 
 with tab1:
-  # Top Header Metrics
+  # Top Header Metric Bar
   c1, c2, c3, c4 = st.columns(4)
   total_deployed = (
       df_positions["Position Value ($)"].sum() if not df_positions.empty else 0
@@ -410,7 +430,7 @@ with tab1:
   )
   btc_px = float(mids.get("BTC", 0))
 
-  c1.metric("Whales Active in Market", f"{active_count} Traders")
+  c1.metric("Active Whales in Market", f"{active_count} Traders")
   c2.metric("Total Whale Capital", f"${total_deployed:,.0f}")
   c3.metric("Net Whale Profit/Loss", f"${net_pnl:+,.0f}")
   c4.metric("BTC Market Price", f"${btc_px:,.1f}" if btc_px else "Loading...")
@@ -418,18 +438,17 @@ with tab1:
   st.divider()
 
   # ==========================================================================
-  # TOP 3 BEST LOOKING TRADES (FRONT & CENTER)
+  # SECTION 1: TOP 3 BEST LOOKING WHALE TRADES (COIN CONSENSUS)
   # ==========================================================================
-  st.subheader("🔥 Top 3 Best-Looking Whale Trades")
+  st.subheader("🔥 Top 3 Best-Looking Whale Setups")
   st.caption(
-      "Ranked by our AI Trade Quality Score: filters for positive momentum,"
-      " strong agreement, and avoids underwater losing trades."
+      "Highest quality trade consensus across all whales (scored by positive"
+      " momentum, conviction, and low drawdown)."
   )
 
   if not coin_summaries:
     st.info("No active whale positions detected at the moment.")
   else:
-    # Sort strictly by the highest Quality Score
     best_trades = sorted(
         coin_summaries, key=lambda x: x["Quality_Score"], reverse=True
     )[:3]
@@ -438,21 +457,20 @@ with tab1:
     for idx, t in enumerate(best_trades):
       with top_cols[idx]:
         side_color = "badge-long" if t["Majority Side"] == "LONG" else "badge-short"
-        status_icon = "🟢" if t["Majority Side"] == "LONG" else "🔴"
-        roi_color = "green" if t["Raw_ROI"] >= 0 else "red"
+        roi_color = "#34d399" if t["Raw_ROI"] >= 0 else "#f87171"
 
         st.markdown(
             f"""
                 <div class="top-trade-card">
                     <h3 style="margin-top: 0;">#{idx+1} {t['Coin']} <span class="{side_color}">{t['Majority Side']}</span></h3>
-                    <p style="font-size: 1.15rem; margin-bottom: 8px;">
+                    <p style="font-size: 1.1rem; margin-bottom: 8px;">
                         <b>Score:</b> <span style="color: #60a5fa; font-weight: bold;">{t['Quality_Score']}/100</span>
                     </p>
                     <p style="margin: 4px 0;"><b>🐋 Whales:</b> <code>{t['Whales in Trade']}</code></p>
                     <p style="margin: 4px 0;"><b>🎯 Avg Entry:</b> <code>{t['Avg Entry']}</code></p>
                     <p style="margin: 4px 0;"><b>📈 Current Px:</b> <code>{t['Current Price']}</code></p>
                     <p style="margin: 4px 0;"><b>💰 Volume:</b> <code>{t['Total Volume ($)']}</code></p>
-                    <p style="margin: 4px 0;"><b>💵 PnL:</b> <code style="color: {roi_color}; font-weight: bold;">{t['Group PnL ($)']} ({t['Group ROI (%)']})</code></p>
+                    <p style="margin: 4px 0;"><b>💵 PnL:</b> <span style="color: {roi_color}; font-weight: bold;">{t['Group PnL ($)']} ({t['Group ROI (%)']})</span></p>
                 </div>
                 """,
             unsafe_allow_html=True,
@@ -460,7 +478,54 @@ with tab1:
 
   st.divider()
 
-  # All Other Assets Breakdown
+  # ==========================================================================
+  # SECTION 2: LIVE TRADES FROM THE TOP ELITE TRADERS
+  # ==========================================================================
+  st.subheader("👑 Live Trades from Top Individual Whales")
+  st.caption(
+      "Direct positions currently open by verified leaderboard legends and"
+      " high-earning traders."
+  )
+
+  if df_positions.empty:
+    st.info("No individual trader positions detected.")
+  else:
+    # Sort individual positions by highest unrealized profit ($)
+    elite_trades = df_positions.sort_values(
+        by="Unrealized PnL ($)", reverse=True
+    ).head(3)
+
+    trader_cols = st.columns(min(len(elite_trades), 3))
+
+    for idx, (_, row) in enumerate(elite_trades.iterrows()):
+      with trader_cols[idx]:
+        side_color = "badge-long" if row["Side"] == "LONG" else "badge-short"
+        roi_color = "#34d399" if row["ROI (%)"] >= 0 else "#f87171"
+        explorer_url = f"https://app.hyperliquid.xyz/explorer/address/{row['Full Address']}"
+
+        st.markdown(
+            f"""
+                <div class="trader-trade-card">
+                    <h4 style="margin-top: 0; color: #fbbf24;">{row['Trader Label']}</h4>
+                    <p style="font-size: 1.15rem; margin-bottom: 6px;">
+                        <b>{row['Coin']}</b> <span class="{side_color}">{row['Side']} {row['Leverage']}</span>
+                    </p>
+                    <p style="margin: 4px 0;"><b>🎯 Entry:</b> <code>${row['Entry Price']:,.2f}</code> | <b>Current:</b> <code>${row['Current Price']:,.2f}</code></p>
+                    <p style="margin: 4px 0;"><b>💰 Trade Value:</b> <code>${row['Position Value ($)']:,.2f}</code></p>
+                    <p style="margin: 4px 0;"><b>💵 Trader PnL:</b> <span style="color: {roi_color}; font-weight: bold;">${row['Unrealized PnL ($)']:+,.2f} ({row['ROI (%)']:+.2f}%)</span></p>
+                    <p style="margin: 8px 0 0 0;">
+                        <a href="{explorer_url}" target="_blank" style="color: #60a5fa; text-decoration: none; font-size: 0.85rem;">🔗 View Wallet on Hyperliquid →</a>
+                    </p>
+                </div>
+                """,
+            unsafe_allow_html=True,
+        )
+
+  st.divider()
+
+  # ==========================================================================
+  # SECTION 3: ALL ACTIVE ASSETS BREAKDOWN TABLE
+  # ==========================================================================
   st.subheader("📊 Complete Whale Portfolio Breakdown")
   if coin_summaries:
     df_overview = pd.DataFrame(
@@ -480,7 +545,9 @@ with tab1:
 
   st.divider()
 
-  # Individual Whales Table
+  # ==========================================================================
+  # SECTION 4: DETAILED INDIVIDUAL POSITIONS TABLE
+  # ==========================================================================
   st.subheader("🐋 Individual Open Positions")
   if not df_positions.empty:
     coins = sorted(df_positions["Coin"].unique())
@@ -519,13 +586,13 @@ with tab1:
         hide_index=True,
     )
 
+# ------------------------------------------------------------------------------
+# TAB 2: SIGNAL HISTORY & SUCCESS RATE
+# ------------------------------------------------------------------------------
 with tab2:
   st.subheader("📈 Historical Signal Performance")
   if df_history.empty:
-    st.info(
-        "No historical signals logged yet. When an actionable trade triggers,"
-        " it will be tracked here automatically."
-    )
+    st.info("No historical signals logged yet.")
   else:
     wins = len(df_history[df_history["status"] == "WIN"])
     losses = len(df_history[df_history["status"] == "LOSS"])
@@ -539,7 +606,6 @@ with tab2:
     hc3.metric("Total Losses ❌", f"{losses}")
     hc4.metric("Active / Open Trades ⏳", f"{open_trades}")
 
-    st.caption("Target: +2.0% Take Profit (WIN) | -1.5% Stop Loss (LOSS)")
     st.dataframe(
         df_history[[
             "timestamp",
