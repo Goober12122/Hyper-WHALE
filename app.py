@@ -205,7 +205,9 @@ def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
           )
 
     for sig in actionable_signals:
-      coin = sig["Coin"]
+      coin = sig.get("Coin")
+      if not coin:
+        continue
       curr_px = float(all_mids.get(coin, 0))
       if curr_px > 0:
         cursor.execute(
@@ -222,19 +224,20 @@ def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
               (
                   now_str,
                   coin,
-                  sig["Signal"],
+                  sig.get("Signal", ""),
                   curr_px,
                   curr_px,
-                  sig["Conviction"],
+                  sig.get("Conviction", ""),
               ),
           )
           if webhook_url:
             send_discord_alert(
                 webhook_url,
-                f"🚨 New Whale Signal: {coin} {sig['Signal']}",
+                f"🚨 New Whale Signal: {coin} {sig.get('Signal', '')}",
                 f"• **Search Ticker:** `{coin}`\n• **Conviction:**"
-                f" {sig['Conviction']}\n• **Entry Price:** ${curr_px:,.2f}\n•"
-                f" **Hyperliquid Link:** https://app.hyperliquid.xyz/trade/{coin}",
+                f" {sig.get('Conviction', '')}\n• **Entry Price:**"
+                f" ${curr_px:,.2f}\n• **Hyperliquid Link:**"
+                f" https://app.hyperliquid.xyz/trade/{coin}",
             )
     conn.commit()
 
@@ -313,16 +316,19 @@ def scan_single_wallet(info, address, all_mids):
     state = info.user_state(address)
     for item in state.get("assetPositions", []):
       pos = item.get("position", {})
-      size = float(pos.get("szi", 0))
+      size = float(pos.get("szi", 0) or 0)
 
       if size != 0:
         coin = pos.get("coin")
-        side = "LONG" if size > 0 else "SHORT"
-        entry_px = float(pos.get("entryPx", 0))
-        curr_px = float(all_mids.get(coin, entry_px))
-        pnl = float(pos.get("unrealizedPnl", 0))
+        # Ensure coin is a valid non-empty string
+        if not coin or not isinstance(coin, str):
+          continue
 
-        # Liquidation Risk & Safety Calculations
+        side = "LONG" if size > 0 else "SHORT"
+        entry_px = float(pos.get("entryPx", 0) or 0)
+        curr_px = float(all_mids.get(coin, entry_px) or entry_px)
+        pnl = float(pos.get("unrealizedPnl", 0) or 0)
+
         liq_px = float(pos.get("liquidationPx", 0) or 0)
         if liq_px > 0 and curr_px > 0:
           liq_dist = abs(curr_px - liq_px) / curr_px * 100
@@ -352,7 +358,7 @@ def scan_single_wallet(info, address, all_mids):
             "Wallet": f"{address[:6]}...{address[-4:]}",
             "Full Address": address,
             "Trader Label": trader_label,
-            "Coin": coin,
+            "Coin": str(coin),
             "Trade Link": f"https://app.hyperliquid.xyz/trade/{coin}",
             "Side": side,
             "Size": abs(size),
@@ -404,21 +410,22 @@ def fetch_hyperliquid_data(wallet_list):
 # ==============================================================================
 def score_trade_quality(c):
   score = 50.0
-  roi = c["Raw_ROI"]
+  roi = c.get("Raw_ROI", 0.0)
 
   if roi >= 0:
     score += min(roi * 4.0, 30.0)
   else:
     score += max(roi * 2.5, -45.0)
 
-  score += (c["Raw_Conviction"] - 0.5) * 30.0
+  score += (c.get("Raw_Conviction", 0.5) - 0.5) * 30.0
 
-  if c["Raw_Volume"] >= 500000:
+  vol = c.get("Raw_Volume", 0)
+  if vol >= 500000:
     score += 8.0
-  elif c["Raw_Volume"] >= 100000:
+  elif vol >= 100000:
     score += 4.0
 
-  if c["Raw_Whales"] >= 2 and c["Raw_Conviction"] >= 0.80:
+  if c.get("Raw_Whales", 0) >= 2 and c.get("Raw_Conviction", 0) >= 0.80:
     score += 10.0
 
   return round(max(min(score, 99.9), 1.0), 1)
@@ -484,7 +491,7 @@ with st.sidebar:
 with st.spinner("Analyzing whale positioning & live market feeds..."):
   mids, df_positions, active_count = fetch_hyperliquid_data(DEFAULT_100_WALLETS)
 
-if hide_exotics and not df_positions.empty:
+if hide_exotics and not df_positions.empty and "Coin" in df_positions.columns:
   df_positions = df_positions[
       df_positions["Coin"].isin(["BTC", "ETH", "SOL", "HYPE"])
   ]
@@ -492,16 +499,16 @@ if hide_exotics and not df_positions.empty:
 coin_summaries = []
 actionable_signals = []
 
-if not df_positions.empty:
+if not df_positions.empty and "Coin" in df_positions.columns:
   for coin, group in df_positions.groupby("Coin"):
     total_whales = len(group)
     longs = len(group[group["Side"] == "LONG"])
     shorts = len(group[group["Side"] == "SHORT"])
 
-    total_value = group["Position Value ($)"].sum()
-    total_pnl = group["Unrealized PnL ($)"].sum()
-    avg_entry = group["Entry Price"].mean()
-    curr_px = float(mids.get(coin, avg_entry))
+    total_value = float(group["Position Value ($)"].sum())
+    total_pnl = float(group["Unrealized PnL ($)"].sum())
+    avg_entry = float(group["Entry Price"].mean())
+    curr_px = float(mids.get(coin, avg_entry) or avg_entry)
 
     group_roi = (
         (total_pnl / (total_value - total_pnl) * 100)
@@ -515,7 +522,7 @@ if not df_positions.empty:
     majority_side = "LONG" if long_ratio >= short_ratio else "SHORT"
 
     item = {
-        "Coin": coin,
+        "Coin": str(coin),
         "Current Price": f"${curr_px:,.2f}",
         "Avg Entry": f"${avg_entry:,.2f}",
         "Majority Side": majority_side,
@@ -536,7 +543,7 @@ if not df_positions.empty:
 
     if conviction >= consensus_threshold and total_whales >= min_traders:
       actionable_signals.append({
-          "Coin": coin,
+          "Coin": str(coin),
           "Signal": f"STRONG {majority_side}",
           "Conviction": f"{conviction*100:.0f}%",
       })
@@ -560,7 +567,7 @@ with tab1:
   net_pnl = (
       df_positions["Unrealized PnL ($)"].sum() if not df_positions.empty else 0
   )
-  btc_px = float(mids.get("BTC", 0))
+  btc_px = float(mids.get("BTC", 0) or 0)
 
   c1.metric("Active Whales in Market", f"{active_count} Traders")
   c2.metric("Total Whale Capital", f"${total_deployed:,.0f}")
@@ -619,37 +626,46 @@ with tab1:
   # ==========================================================================
   # FEATURE: EMBEDDED TRADINGVIEW LIVE CHART WITH DYNAMIC ASSET SELECTOR
   # ==========================================================================
-  if not df_positions.empty or best_trades:
-    st.markdown("#### 📈 Live Technical Price Chart")
+  st.markdown("#### 📈 Live Technical Price Chart")
 
-    # Extract all coins available in the market
-    active_coins = sorted(
-        list(
-            set(
-                [t["Coin"] for t in best_trades]
-                + list(df_positions["Coin"].unique())
-            )
-        )
+  # Guaranteed fallback so active_coins is never empty or contains None
+  active_coins = ["BTC", "ETH", "SOL"]
+  if best_trades:
+    active_coins.extend(
+        [t["Coin"] for t in best_trades if t.get("Coin") and str(t["Coin"])]
     )
+  if not df_positions.empty and "Coin" in df_positions.columns:
+    active_coins.extend([
+        str(c)
+        for c in df_positions["Coin"].dropna().unique()
+        if c and str(c).strip()
+    ])
 
-    # Let user select which coin to inspect
-    selected_chart_coin = st.selectbox(
-        "Choose an asset to load on the TradingView chart:",
-        options=active_coins,
-        index=0,
-        key="chart_asset_selector",
-    )
+  active_coins = sorted(list(set(active_coins)))
 
-    # Clean ticker name for TradingView (strip prefixes like xyz:)
-    clean_symbol = selected_chart_coin.replace("xyz:", "").upper()
-    tv_symbol = f"BINANCE:{clean_symbol}USDT"
-    unique_dom_id = f"tv_{clean_symbol}_{int(time.time()*1000)}"
+  selected_chart_coin = st.selectbox(
+      "Choose an asset to load on the TradingView chart:",
+      options=active_coins,
+      index=0,
+      key="chart_asset_selector",
+  )
 
-    tv_widget = f"""
-        <div class="tradingview-widget-container" style="height: 420px; width: 100%;">
-          <div id="{unique_dom_id}" style="height: 420px;"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-          <script type="text/javascript">
+  clean_symbol = (
+      str(selected_chart_coin)
+      .replace("xyz:", "")
+      .replace("-PERP", "")
+      .upper()
+  )
+  tv_symbol = f"BINANCE:{clean_symbol}USDT"
+  unique_dom_id = f"tv_chart_{clean_symbol}"
+
+  tv_widget = f"""
+    <div class="tradingview-widget-container" style="height: 420px; width: 100%;">
+      <div id="{unique_dom_id}" style="height: 420px;"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      function loadWidget() {{
+        if (typeof TradingView !== 'undefined') {{
           new TradingView.widget({{
             "autosize": true,
             "symbol": "{tv_symbol}",
@@ -665,13 +681,17 @@ with tab1:
             "save_image": false,
             "container_id": "{unique_dom_id}"
           }});
-          </script>
-        </div>
-        """
-    # Using dynamic key forces Streamlit to cleanly re-create the iframe whenever the coin changes!
-    components.html(
-        tv_widget, height=430, key=f"tv_embed_frame_{selected_chart_coin}"
-    )
+        }} else {{
+          setTimeout(loadWidget, 100);
+        }}
+      }}
+      loadWidget();
+      </script>
+    </div>
+    """
+  components.html(
+      tv_widget, height=430, key=f"tv_embed_frame_{selected_chart_coin}"
+  )
 
   st.divider()
 
@@ -730,20 +750,31 @@ with tab1:
   st.subheader("📊 Complete Whale Portfolio Breakdown")
   if coin_summaries:
     df_overview = pd.DataFrame(
-        sorted(coin_summaries, key=lambda x: x["Raw_Volume"], reverse=True)
-    )[[
-        "Coin",
-        "Trade_URL",
-        "Majority Side",
-        "Quality_Score",
-        "Current Price",
-        "Avg Entry",
-        "Whales in Trade",
-        "Total Volume ($)",
-        "Group PnL ($)",
-        "Group ROI (%)",
-    ]]
-    st.dataframe(df_overview, use_container_width=True, hide_index=True)
+        sorted(
+            coin_summaries,
+            key=lambda x: x.get("Raw_Volume", 0),
+            reverse=True,
+        )
+    )
+    cols_to_show = [
+        c
+        for c in [
+            "Coin",
+            "Trade_URL",
+            "Majority Side",
+            "Quality_Score",
+            "Current Price",
+            "Avg Entry",
+            "Whales in Trade",
+            "Total Volume ($)",
+            "Group PnL ($)",
+            "Group ROI (%)",
+        ]
+        if c in df_overview.columns
+    ]
+    st.dataframe(
+        df_overview[cols_to_show], use_container_width=True, hide_index=True
+    )
 
   st.divider()
 
@@ -751,8 +782,8 @@ with tab1:
   # SECTION 4: DETAILED INDIVIDUAL POSITIONS TABLE
   # ==========================================================================
   st.subheader("🐋 Individual Open Positions & Liquidation Gauges")
-  if not df_positions.empty:
-    coins = sorted(df_positions["Coin"].unique())
+  if not df_positions.empty and "Coin" in df_positions.columns:
+    coins = sorted([str(c) for c in df_positions["Coin"].dropna().unique()])
     selected_coins = st.multiselect(
         "Filter by Asset", options=coins, default=coins[:6]
     )
@@ -760,39 +791,45 @@ with tab1:
         df_positions[df_positions["Coin"].isin(selected_coins)].copy()
     )
 
-    filtered_df["Entry Price"] = filtered_df["Entry Price"].apply(
-        lambda x: f"${x:,.2f}"
-    )
-    filtered_df["Current Price"] = filtered_df["Current Price"].apply(
-        lambda x: f"${x:,.2f}"
-    )
-    filtered_df["Position Value ($)"] = filtered_df[
-        "Position Value ($)"
-    ].apply(lambda x: f"${x:,.2f}")
-    filtered_df["Unrealized PnL ($)"] = filtered_df[
-        "Unrealized PnL ($)"
-    ].apply(lambda x: f"${x:+,.2f}")
-    filtered_df["ROI (%)"] = filtered_df["ROI (%)"].apply(
-        lambda x: f"{x:+.2f}%"
-    )
+    if not filtered_df.empty:
+      filtered_df["Entry Price"] = filtered_df["Entry Price"].apply(
+          lambda x: f"${float(x):,.2f}" if pd.notnull(x) else "$0.00"
+      )
+      filtered_df["Current Price"] = filtered_df["Current Price"].apply(
+          lambda x: f"${float(x):,.2f}" if pd.notnull(x) else "$0.00"
+      )
+      filtered_df["Position Value ($)"] = filtered_df[
+          "Position Value ($)"
+      ].apply(lambda x: f"${float(x):,.2f}" if pd.notnull(x) else "$0.00")
+      filtered_df["Unrealized PnL ($)"] = filtered_df[
+          "Unrealized PnL ($)"
+      ].apply(lambda x: f"${float(x):+,.2f}" if pd.notnull(x) else "$0.00")
+      filtered_df["ROI (%)"] = filtered_df["ROI (%)"].apply(
+          lambda x: f"{float(x):+.2f}%" if pd.notnull(x) else "0.00%"
+      )
 
-    st.dataframe(
-        filtered_df[[
-            "Wallet",
-            "Coin",
-            "Trade Link",
-            "Side",
-            "Entry Price",
-            "Current Price",
-            "Liquidation Gauge",
-            "Position Value ($)",
-            "Unrealized PnL ($)",
-            "ROI (%)",
-            "Leverage",
-        ]],
-        use_container_width=True,
-        hide_index=True,
-    )
+      cols_to_show_ind = [
+          c
+          for c in [
+              "Wallet",
+              "Coin",
+              "Trade Link",
+              "Side",
+              "Entry Price",
+              "Current Price",
+              "Liquidation Gauge",
+              "Position Value ($)",
+              "Unrealized PnL ($)",
+              "ROI (%)",
+              "Leverage",
+          ]
+          if c in filtered_df.columns
+      ]
+      st.dataframe(
+          filtered_df[cols_to_show_ind],
+          use_container_width=True,
+          hide_index=True,
+      )
 
 with tab2:
   st.subheader("📈 Historical Signal Performance")
