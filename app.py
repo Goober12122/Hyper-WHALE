@@ -56,14 +56,26 @@ st.markdown(
 
 # Known Elite Wallet Labels
 ELITE_WALLETS = {
-    "0xa312114b5795dff9b8db50474dd57701aa78ad1e": "👑 All-Time #1 Legend ($95M+ PnL)",
+    "0xa312114b5795dff9b8db50474dd57701aa78ad1e": (
+        "👑 All-Time #1 Legend ($95M+ PnL)"
+    ),
     "0x5078c2fbea2b2ad61bc840bc023e35fce56bedb6": "🐋 High-Volume Perps Whale",
-    "0xb317d2bc2d3d2df5fa441b5bae0ab9d8b07283ae": "💎 Multi-Million Trend Trader",
-    "0xa697a5b929cca9b3f8a78c4e4af1848506c06022": "🏛️ Institutional Quant Fund",
-    "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303": "🏆 Top Public Vault Leader",
+    "0xb317d2bc2d3d2df5fa441b5bae0ab9d8b07283ae": (
+        "💎 Multi-Million Trend Trader"
+    ),
+    "0xa697a5b929cca9b3f8a78c4e4af1848506c06022": (
+        "🏛️ Institutional Quant Fund"
+    ),
+    "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303": (
+        "🏆 Top Public Vault Leader"
+    ),
     "0x4010892c55452d50cb68b556efc5fa624d62b172": "🎯 Elite Swing Specialist",
-    "0x1807f6ca9b332ea5ccda3a254c84bdf90e412c5a": "⚡ Core Perps Whale (BTC/ETH)",
-    "0x20c2d95a3dfdca9e9ad12794d5fa6fad99da44f5": "🛡️ Low-Drawdown Trend Follower",
+    "0x1807f6ca9b332ea5ccda3a254c84bdf90e412c5a": (
+        "⚡ Core Perps Whale (BTC/ETH)"
+    ),
+    "0x20c2d95a3dfdca9e9ad12794d5fa6fad99da44f5": (
+        "🛡️ Low-Drawdown Trend Follower"
+    ),
 }
 
 # ==============================================================================
@@ -267,9 +279,11 @@ def scan_single_wallet(info, address, all_mids):
             "Position Value ($)": position_value,
             "Unrealized PnL ($)": pnl,
             "ROI (%)": roi_pct,
-            "Leverage": f"{leverage}x"
-            if isinstance(leverage, (int, float))
-            else str(leverage),
+            "Leverage": (
+                f"{leverage}x"
+                if isinstance(leverage, (int, float))
+                else str(leverage)
+            ),
         })
   except Exception:
     pass
@@ -303,7 +317,7 @@ def fetch_hyperliquid_data(wallet_list):
 
 
 # ==============================================================================
-# TRADE QUALITY SCORING ALGORITHM (Coin Level)
+# TRADE QUALITY SCORING ALGORITHM
 # ==============================================================================
 def score_trade_quality(c):
   score = 50.0
@@ -333,9 +347,7 @@ def score_trade_quality(c):
 with st.sidebar:
   st.header("⚙️ Radar Controls")
   min_traders = st.slider("Min Whales in Position", 1, 5, 1)
-  consensus_threshold = (
-      st.slider("Consensus Threshold (%)", 50, 100, 60) / 100
-  )
+  consensus_threshold = st.slider("Consensus Threshold (%)", 50, 100, 60) / 100
   hide_exotics = st.checkbox("Only Show Majors (BTC, ETH, SOL, HYPE)", False)
 
   if st.button("🔄 Refresh Data Now", use_container_width=True):
@@ -415,12 +427,10 @@ df_history = get_performance_data()
 # ==============================================================================
 st.title("⚡ Hyperliquid Smart Money Radar")
 
-tab1, tab2 = st.tabs(
-    ["⚡ Live Whale Radar", "📜 Signal History & Success Rate"]
-)
+tab1, tab2 = st.tabs(["⚡ Live Whale Radar", "📜 Signal History & Success Rate"])
 
 with tab1:
-  # Top Header Metric Bar
+  # Top Header Metrics
   c1, c2, c3, c4 = st.columns(4)
   total_deployed = (
       df_positions["Position Value ($)"].sum() if not df_positions.empty else 0
@@ -438,7 +448,7 @@ with tab1:
   st.divider()
 
   # ==========================================================================
-  # SECTION 1: TOP 3 BEST LOOKING WHALE TRADES (COIN CONSENSUS)
+  # SECTION 1: TOP 3 BEST LOOKING WHALE SETUPS (COIN CONSENSUS)
   # ==========================================================================
   st.subheader("🔥 Top 3 Best-Looking Whale Setups")
   st.caption(
@@ -456,7 +466,9 @@ with tab1:
 
     for idx, t in enumerate(best_trades):
       with top_cols[idx]:
-        side_color = "badge-long" if t["Majority Side"] == "LONG" else "badge-short"
+        side_color = (
+            "badge-long" if t["Majority Side"] == "LONG" else "badge-short"
+        )
         roi_color = "#34d399" if t["Raw_ROI"] >= 0 else "#f87171"
 
         st.markdown(
@@ -484,15 +496,15 @@ with tab1:
   st.subheader("👑 Live Trades from Top Individual Whales")
   st.caption(
       "Direct positions currently open by verified leaderboard legends and"
-      " high-earning traders."
+      " top-earning traders."
   )
 
   if df_positions.empty:
     st.info("No individual trader positions detected.")
   else:
-    # Sort individual positions by highest unrealized profit ($)
+    # Corrected: Pandas uses ascending=False, not reverse=True
     elite_trades = df_positions.sort_values(
-        by="Unrealized PnL ($)", reverse=True
+        by="Unrealized PnL ($)", ascending=False
     ).head(3)
 
     trader_cols = st.columns(min(len(elite_trades), 3))
@@ -554,7 +566,9 @@ with tab1:
     selected_coins = st.multiselect(
         "Filter by Asset", options=coins, default=coins[:6]
     )
-    filtered_df = df_positions[df_positions["Coin"].isin(selected_coins)].copy()
+    filtered_df = (
+        df_positions[df_positions["Coin"].isin(selected_coins)].copy()
+    )
 
     filtered_df["Entry Price"] = filtered_df["Entry Price"].apply(
         lambda x: f"${x:,.2f}"
@@ -562,13 +576,15 @@ with tab1:
     filtered_df["Current Price"] = filtered_df["Current Price"].apply(
         lambda x: f"${x:,.2f}"
     )
-    filtered_df["Position Value ($)"] = filtered_df["Position Value ($)"].apply(
-        lambda x: f"${x:,.2f}"
+    filtered_df["Position Value ($)"] = filtered_df[
+        "Position Value ($)"
+    ].apply(lambda x: f"${x:,.2f}")
+    filtered_df["Unrealized PnL ($)"] = filtered_df[
+        "Unrealized PnL ($)"
+    ].apply(lambda x: f"${x:+,.2f}")
+    filtered_df["ROI (%)"] = filtered_df["ROI (%)"].apply(
+        lambda x: f"{x:+.2f}%"
     )
-    filtered_df["Unrealized PnL ($)"] = filtered_df["Unrealized PnL ($)"].apply(
-        lambda x: f"${x:+,.2f}"
-    )
-    filtered_df["ROI (%)"] = filtered_df["ROI (%)"].apply(lambda x: f"{x:+.2f}%")
 
     st.dataframe(
         filtered_df[[
@@ -586,9 +602,6 @@ with tab1:
         hide_index=True,
     )
 
-# ------------------------------------------------------------------------------
-# TAB 2: SIGNAL HISTORY & SUCCESS RATE
-# ------------------------------------------------------------------------------
 with tab2:
   st.subheader("📈 Historical Signal Performance")
   if df_history.empty:
