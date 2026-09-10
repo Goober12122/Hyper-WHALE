@@ -720,7 +720,6 @@ with tab1:
   if df_positions.empty:
     st.info("No active positions to calculate weekly profits from.")
   else:
-    # Filter only profitable trades and rank them by highest dollar profit
     profitable_trades = df_positions[
         df_positions["Unrealized PnL ($)"] > 0
     ].sort_values(by="Unrealized PnL ($)", ascending=False)
@@ -844,7 +843,6 @@ with tab1:
       .upper()
   )
 
-  # Map to verified exchange so TradingView never shows "symbol doesn't exist"
   tv_symbol = EXCHANGE_MAP.get(clean_symbol, f"{clean_symbol}USDT")
   unique_dom_id = f"tv_chart_{clean_symbol}"
 
