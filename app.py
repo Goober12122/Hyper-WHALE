@@ -162,7 +162,7 @@ def send_discord_alert(webhook_url, title, message, color=0x3B82F6):
         },
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
-      return resp.status in [200, 204]
+      return resp.status in (200, 204)
   except Exception:
     return False
 
@@ -497,7 +497,7 @@ with st.sidebar:
   st.divider()
   st.header("⏱️ Live Auto-Refresh")
   auto_refresh = st.toggle("Enable Hands-Free Auto Refresh", value=False)
-  refresh_seconds = st.selectbox("Interval", [30, 60, 120], index=1)
+  refresh_seconds = st.selectbox("Interval (Seconds)", (30, 60, 120), index=1)
   play_audio = st.checkbox("Play Audio Chime on Signal", value=True)
 
   if auto_refresh:
@@ -709,13 +709,14 @@ with tab1:
   # Top 5 vs Top 10 Toggle
   prof_view_col1, prof_view_col2 = st.columns(2)
   with prof_view_col1:
-    top_limit = st.radio(
+    top_choice = st.radio(
         "Display Range:",
-        options=,
+        options=("Top 5", "Top 10"),
         index=0,
         horizontal=True,
         key="weekly_rank_limit",
     )
+    top_limit = 5 if top_choice == "Top 5" else 10
 
   if df_positions.empty:
     st.info("No active positions to calculate weekly profits from.")
