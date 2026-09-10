@@ -29,6 +29,14 @@ st.markdown(
         margin-bottom: 12px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
     }
+    .weekly-profit-card {
+        background: linear-gradient(135deg, #13241b 0%, #151c17 100%);
+        border: 1px solid #10b981;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
     .trader-trade-card {
         background: linear-gradient(135deg, #241e17 0%, #17181c 100%);
         border: 1px solid #f59e0b;
@@ -103,11 +111,23 @@ ELITE_WALLETS = {
     ),
 }
 
+# Mapping for coins not on Binance to ensure TradingView loads cleanly
+EXCHANGE_MAP = {
+    "APEX": "BYBIT:APEXUSDT",
+    "FARTCOIN": "BYBIT:FARTCOINUSDT",
+    "HYPE": "BYBIT:HYPEUSDT",
+    "TAO": "BINANCE:TAOUSDT",
+    "ZEC": "BINANCE:ZECUSDT",
+    "XMR": "KRAKEN:XMRUSD",
+    "BTC": "BINANCE:BTCUSDT",
+    "ETH": "BINANCE:ETHUSDT",
+    "SOL": "BINANCE:SOLUSDT",
+}
+
 # ==============================================================================
-# ALERT HELPERS (TELEGRAM & DISCORD)
+# DISCORD & TELEGRAM ALERTS
 # ==============================================================================
 def send_telegram_alert(bot_token, chat_id, text):
-  """Sends an instant message via the official Telegram Bot API."""
   if not bot_token or not chat_id:
     return False
   url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -148,9 +168,15 @@ def send_discord_alert(webhook_url, title, message, color=0x3B82F6):
 
 
 # ==============================================================================
-# LOCAL DATABASE
+# LOCAL DATABASE & WEEKLY TRACKING
 # ==============================================================================
 DB_PATH = "signals.db"
+
+
+def get_current_week_id():
+  now = datetime.now()
+  iso_year, iso_week, _ = now.isocalendar()
+  return f"{iso_year}-W{iso_week:02d}", f"Week {iso_week}, {iso_year}"
 
 
 def init_db():
@@ -167,6 +193,22 @@ def init_db():
                 status TEXT,
                 pnl_pct REAL,
                 conviction TEXT
+            )
+        """)
+    cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_trade_archive (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_id TEXT,
+                coin TEXT,
+                side TEXT,
+                trader_label TEXT,
+                wallet TEXT,
+                entry_price REAL,
+                current_price REAL,
+                position_value REAL,
+                pnl REAL,
+                roi REAL,
+                timestamp TEXT
             )
         """)
     conn.commit()
@@ -248,7 +290,6 @@ def log_or_update_signals(
                   sig.get("Conviction", ""),
               ),
           )
-          # Send Discord alert
           if webhook_url:
             send_discord_alert(
                 webhook_url,
@@ -258,7 +299,6 @@ def log_or_update_signals(
                 f" ${curr_px:,.2f}\n• **Hyperliquid Link:**"
                 f" https://app.hyperliquid.xyz/trade/{coin}",
             )
-          # Send Telegram alert
           if tg_token and tg_chat_id:
             msg = (
                 f"🚨 *New Whale Signal: {coin} {sig.get('Signal', '')}*\n\n"
@@ -671,6 +711,74 @@ with tab1:
   st.divider()
 
   # ==========================================================================
+  # NEW FEATURE: TOP PROFIT DRIVERS OF THE WEEK (ROTATING WEEKLY)
+  # ==========================================================================
+  current_week_code, current_week_title = get_current_week_id()
+
+  st.subheader(f"🏆 Top Profit Drivers of the Week ({current_week_title})")
+  st.caption(
+      f"Shows exactly which trades are responsible for generating the"
+      f" **${net_pnl:+,.0f}** in whale profits this week. Automatically resets"
+      " and rotates every Monday at 00:00 UTC."
+  )
+
+  # Top 5 vs Top 10 Toggle
+  prof_view_col1, prof_view_col2 = st.columns()
+  with prof_view_col1:
+    top_limit = st.radio(
+        "Display Range:",
+       ,
+        index=0,
+        horizontal=True,
+        key="weekly_rank_limit",
+    )
+
+  if df_positions.empty:
+    st.info("No active positions to calculate weekly profits from.")
+  else:
+    # Filter only profitable trades and rank them by highest dollar profit
+    profitable_trades = df_positions[
+        df_positions["Unrealized PnL ($)"] > 0
+    ].sort_values(by="Unrealized PnL ($)", ascending=False)
+    total_positive_pnl = profitable_trades["Unrealized PnL ($)"].sum()
+
+    if profitable_trades.empty:
+      st.info(
+          "No trades are currently sitting in green profit. Market is in a"
+          " drawdown."
+      )
+    else:
+      displayed_trades = profitable_trades.head(top_limit)
+      grid_cols = st.columns(min(len(displayed_trades), 5))
+
+      for idx, (_, row) in enumerate(displayed_trades.iterrows()):
+        contrib_pct = (
+            (row["Unrealized PnL ($)"] / total_positive_pnl * 100)
+            if total_positive_pnl > 0
+            else 0.0
+        )
+        side_color = "badge-long" if row["Side"] == "LONG" else "badge-short"
+
+        with grid_cols[idx % 5]:
+          st.markdown(
+              f"""
+                    <div class="weekly-profit-card">
+                        <h4 style="margin-top: 0; color: #10b981;">#{idx+1} {row['Coin']} <span class="{side_color}">{row['Side']} {row['Leverage']}</span></h4>
+                        <p style="font-size: 1.15rem; margin-bottom: 4px;">
+                            <b>Profit:</b> <span style="color: #34d399; font-weight: bold;">+${row['Unrealized PnL ($)']:,.2f}</span>
+                        </p>
+                        <p style="margin: 2px 0; font-size: 0.88rem; color: #9ca3af;"><b>ROI:</b> <code>+{row['ROI (%)']:.2f}%</code></p>
+                        <p style="margin: 2px 0; font-size: 0.88rem; color: #9ca3af;"><b>Contribution:</b> <code>{contrib_pct:.1f}%</code> of total</p>
+                        <p style="margin: 2px 0; font-size: 0.88rem; color: #9ca3af;"><b>Trader:</b> {row['Trader Label'][:18]}...</p>
+                        <a href="{row['Trade Link']}" target="_blank" class="trade-btn" style="padding: 4px 8px; font-size: 0.8rem; margin-top: 6px;">🚀 Trade {row['Coin']} →</a>
+                    </div>
+                    """,
+              unsafe_allow_html=True,
+          )
+
+  st.divider()
+
+  # ==========================================================================
   # SECTION 1: TOP 3 BEST LOOKING SETUPS (FILTERED BY SLIDERS)
   # ==========================================================================
   st.subheader("🔥 Top 3 Best-Looking Whale Setups")
@@ -722,7 +830,7 @@ with tab1:
         )
 
   # ==========================================================================
-  # FEATURE: EMBEDDED TRADINGVIEW LIVE CHART WITH DYNAMIC ASSET SELECTOR
+  # FEATURE: EMBEDDED TRADINGVIEW LIVE CHART (FIXED FOR ALTCOINS)
   # ==========================================================================
   st.markdown("#### 📈 Live Technical Price Chart")
 
@@ -751,7 +859,9 @@ with tab1:
       .replace("-PERP", "")
       .upper()
   )
-  tv_symbol = f"BINANCE:{clean_symbol}USDT"
+
+  # Map to verified exchange so TradingView never shows "symbol doesn't exist"
+  tv_symbol = EXCHANGE_MAP.get(clean_symbol, f"{clean_symbol}USDT")
   unique_dom_id = f"tv_chart_{clean_symbol}"
 
   tv_widget = f"""
