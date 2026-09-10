@@ -1,19 +1,20 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import json
 import sqlite3
 import time
+import urllib.request
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ==============================================================================
 # PAGE CONFIGURATION & STYLING
 # ==============================================================================
 st.set_page_config(
-    page_title="Hyperliquid Whale Radar & Top Trades",
-    page_icon="⚡",
-    layout="wide",
+    page_title="Hyperliquid Pro Whale Radar", page_icon="⚡", layout="wide"
 )
 
 st.markdown(
@@ -79,6 +80,36 @@ ELITE_WALLETS = {
 }
 
 # ==============================================================================
+# DISCORD WEBHOOK ALERT HELPER
+# ==============================================================================
+def send_discord_alert(webhook_url, title, message, color=0x3B82F6):
+  """Dispatches a formatted embed alert to a Discord webhook URL."""
+  if not webhook_url or not webhook_url.startswith("https://discord.com/api/webhooks/"):
+    return False
+  payload = {
+      "embeds": [{
+          "title": title,
+          "description": message,
+          "color": color,
+          "timestamp": datetime.utcnow().isoformat(),
+      }]
+  }
+  try:
+    req = urllib.request.Request(
+        webhook_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "HyperliquidRadarBot",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+      return resp.status in [200, 204]
+  except Exception:
+    return False
+
+
+# ==============================================================================
 # LOCAL DATABASE
 # ==============================================================================
 DB_PATH = "signals.db"
@@ -103,7 +134,7 @@ def init_db():
     conn.commit()
 
 
-def log_or_update_signals(actionable_signals, all_mids):
+def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
   init_db()
   with sqlite3.connect(DB_PATH) as conn:
     cursor = conn.cursor()
@@ -169,6 +200,15 @@ def log_or_update_signals(actionable_signals, all_mids):
                   sig["Conviction"],
               ),
           )
+          # Send instant webhook notification
+          if webhook_url:
+            send_discord_alert(
+                webhook_url,
+                f"🚨 New Whale Signal: {coin} {sig['Signal']}",
+                f"• **Conviction:** {sig['Conviction']}\n• **Entry Price:**"
+                f" ${curr_px:,.2f}\n• **Target:** +2.0% Take Profit | -1.5%"
+                " Stop Loss",
+            )
     conn.commit()
 
 
@@ -238,7 +278,7 @@ DEFAULT_100_WALLETS = [
 
 
 # ==============================================================================
-# FAST PARALLEL DATA FETCHING
+# FAST PARALLEL DATA FETCHING + LIQUIDATION GAUGE
 # ==============================================================================
 def scan_single_wallet(info, address, all_mids):
   positions = []
@@ -254,6 +294,21 @@ def scan_single_wallet(info, address, all_mids):
         entry_px = float(pos.get("entryPx", 0))
         curr_px = float(all_mids.get(coin, entry_px))
         pnl = float(pos.get("unrealizedPnl", 0))
+
+        # Liquidation Risk & Safety Calculations
+        liq_px = float(pos.get("liquidationPx", 0) or 0)
+        if liq_px > 0 and curr_px > 0:
+          liq_dist = abs(curr_px - liq_px) / curr_px * 100
+          if liq_dist > 35:
+            liq_safety = "Safe 🟢"
+          elif liq_dist > 15:
+            liq_safety = "Moderate 🟡"
+          else:
+            liq_safety = "High Risk 🔴"
+          liq_str = f"${liq_px:,.2f} ({liq_dist:.1f}% - {liq_safety})"
+        else:
+          liq_str = "None (Low Lev/Spot)"
+          liq_dist = 999.0
 
         position_value = abs(size) * curr_px
         roi_pct = (
@@ -276,6 +331,7 @@ def scan_single_wallet(info, address, all_mids):
             "Size": abs(size),
             "Entry Price": entry_px,
             "Current Price": curr_px,
+            "Liquidation Gauge": liq_str,
             "Position Value ($)": position_value,
             "Unrealized PnL ($)": pnl,
             "ROI (%)": roi_pct,
@@ -317,7 +373,7 @@ def fetch_hyperliquid_data(wallet_list):
 
 
 # ==============================================================================
-# TRADE QUALITY SCORING ALGORITHM
+# TRADE QUALITY SCORING
 # ==============================================================================
 def score_trade_quality(c):
   score = 50.0
@@ -342,25 +398,63 @@ def score_trade_quality(c):
 
 
 # ==============================================================================
-# SIDEBAR CONTROLS
+# SIDEBAR CONTROLS & WEBHOOKS
 # ==============================================================================
 with st.sidebar:
-  st.header("⚙️ Radar Controls")
+  st.header("⚙️ Radar Settings")
+
   min_traders = st.slider("Min Whales in Position", 1, 5, 1)
   consensus_threshold = st.slider("Consensus Threshold (%)", 50, 100, 60) / 100
   hide_exotics = st.checkbox("Only Show Majors (BTC, ETH, SOL, HYPE)", False)
+
+  st.divider()
+  st.header("⏱️ Live Auto-Refresh")
+  auto_refresh = st.toggle("Enable Hands-Free Auto Refresh", value=False)
+  refresh_seconds = st.selectbox("Interval", [30, 60, 120], index=1)
+
+  if auto_refresh:
+    st.caption(f"⚡ Live: Refreshing every {refresh_seconds}s automatically.")
+    refresh_ms = refresh_seconds * 1000
+    components.html(
+        f"""
+        <script>
+        setTimeout(function(){{
+            window.parent.location.reload();
+        }}, {refresh_ms});
+        </script>
+        """,
+        height=0,
+    )
 
   if st.button("🔄 Refresh Data Now", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
   st.divider()
-  st.caption("Live feed from Hyperliquid L1 (auto-updates every 60s).")
+  st.header("🔔 Discord Webhook Alerts")
+  discord_webhook = st.text_input(
+      "Discord Webhook URL",
+      type="password",
+      placeholder="https://discord.com/api/webhooks/...",
+  )
+  if st.button("🔔 Send Test Alert"):
+    if discord_webhook:
+      success = send_discord_alert(
+          discord_webhook,
+          "⚡ Hyperliquid Radar Alert Test",
+          "Your Discord alerts are successfully linked and working!",
+      )
+      if success:
+        st.success("Test alert sent successfully!")
+      else:
+        st.error("Failed to deliver alert. Check your Webhook URL.")
+    else:
+      st.warning("Please paste a Discord Webhook URL first.")
 
 # ==============================================================================
 # DATA LOAD & PROCESSING
 # ==============================================================================
-with st.spinner("Analyzing whale positioning & elite trader plays..."):
+with st.spinner("Analyzing whale positioning & live market feeds..."):
   mids, df_positions, active_count = fetch_hyperliquid_data(DEFAULT_100_WALLETS)
 
 if hide_exotics and not df_positions.empty:
@@ -419,7 +513,7 @@ if not df_positions.empty:
           "Conviction": f"{conviction*100:.0f}%",
       })
 
-log_or_update_signals(actionable_signals, mids)
+log_or_update_signals(actionable_signals, mids, webhook_url=discord_webhook)
 df_history = get_performance_data()
 
 # ==============================================================================
@@ -430,7 +524,7 @@ st.title("⚡ Hyperliquid Smart Money Radar")
 tab1, tab2 = st.tabs(["⚡ Live Whale Radar", "📜 Signal History & Success Rate"])
 
 with tab1:
-  # Top Header Metrics
+  # Header Metrics
   c1, c2, c3, c4 = st.columns(4)
   total_deployed = (
       df_positions["Position Value ($)"].sum() if not df_positions.empty else 0
@@ -448,14 +542,15 @@ with tab1:
   st.divider()
 
   # ==========================================================================
-  # SECTION 1: TOP 3 BEST LOOKING WHALE SETUPS (COIN CONSENSUS)
+  # SECTION 1: TOP 3 BEST LOOKING SETUPS (COIN CONSENSUS)
   # ==========================================================================
   st.subheader("🔥 Top 3 Best-Looking Whale Setups")
   st.caption(
-      "Highest quality trade consensus across all whales (scored by positive"
-      " momentum, conviction, and low drawdown)."
+      "Ranked by AI Quality Score: evaluates positive momentum, agreement, and"
+      " avoids deep drawdown traps."
   )
 
+  best_trades = []
   if not coin_summaries:
     st.info("No active whale positions detected at the moment.")
   else:
@@ -488,6 +583,36 @@ with tab1:
             unsafe_allow_html=True,
         )
 
+  # ==========================================================================
+  # FEATURE: EMBEDDED TRADINGVIEW LIVE CHART FOR #1 RANKED COIN
+  # ==========================================================================
+  if best_trades:
+    top_coin = best_trades[0]["Coin"]
+    st.markdown(f"#### 📈 Live Technical Chart: **{top_coin}/USDT**")
+    tv_widget = f"""
+        <div class="tradingview-widget-container" style="height: 380px; width: 100%;">
+          <div id="tradingview_chart" style="height: 380px;"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+          <script type="text/javascript">
+          new TradingView.widget({{
+            "autosize": true,
+            "symbol": "BINANCE:{top_coin}USDT",
+            "interval": "60",
+            "timezone": "Etc/UTC",
+            "theme": "dark",
+            "style": "1",
+            "locale": "en",
+            "enable_publishing": false,
+            "hide_top_toolbar": false,
+            "hide_legend": false,
+            "save_image": false,
+            "container_id": "tradingview_chart"
+          }});
+          </script>
+        </div>
+        """
+    components.html(tv_widget, height=390)
+
   st.divider()
 
   # ==========================================================================
@@ -502,11 +627,9 @@ with tab1:
   if df_positions.empty:
     st.info("No individual trader positions detected.")
   else:
-    # Corrected: Pandas uses ascending=False, not reverse=True
     elite_trades = df_positions.sort_values(
         by="Unrealized PnL ($)", ascending=False
     ).head(3)
-
     trader_cols = st.columns(min(len(elite_trades), 3))
 
     for idx, (_, row) in enumerate(elite_trades.iterrows()):
@@ -523,6 +646,7 @@ with tab1:
                         <b>{row['Coin']}</b> <span class="{side_color}">{row['Side']} {row['Leverage']}</span>
                     </p>
                     <p style="margin: 4px 0;"><b>🎯 Entry:</b> <code>${row['Entry Price']:,.2f}</code> | <b>Current:</b> <code>${row['Current Price']:,.2f}</code></p>
+                    <p style="margin: 4px 0;"><b>⚠️ Liquidation:</b> <code>{row['Liquidation Gauge']}</code></p>
                     <p style="margin: 4px 0;"><b>💰 Trade Value:</b> <code>${row['Position Value ($)']:,.2f}</code></p>
                     <p style="margin: 4px 0;"><b>💵 Trader PnL:</b> <span style="color: {roi_color}; font-weight: bold;">${row['Unrealized PnL ($)']:+,.2f} ({row['ROI (%)']:+.2f}%)</span></p>
                     <p style="margin: 8px 0 0 0;">
@@ -560,7 +684,7 @@ with tab1:
   # ==========================================================================
   # SECTION 4: DETAILED INDIVIDUAL POSITIONS TABLE
   # ==========================================================================
-  st.subheader("🐋 Individual Open Positions")
+  st.subheader("🐋 Individual Open Positions & Liquidation Gauges")
   if not df_positions.empty:
     coins = sorted(df_positions["Coin"].unique())
     selected_coins = st.multiselect(
@@ -593,6 +717,7 @@ with tab1:
             "Side",
             "Entry Price",
             "Current Price",
+            "Liquidation Gauge",
             "Position Value ($)",
             "Unrealized PnL ($)",
             "ROI (%)",
