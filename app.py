@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import sqlite3
 import time
+import urllib.parse
 import urllib.request
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
@@ -61,9 +62,6 @@ st.markdown(
         font-size: 0.9rem;
         margin-top: 10px;
     }
-    .trade-btn:hover {
-        background-color: #1d4ed8;
-    }
     .trade-btn-gold {
         display: inline-block;
         background-color: #d97706;
@@ -75,9 +73,6 @@ st.markdown(
         font-size: 0.85rem;
         margin-top: 8px;
         margin-right: 8px;
-    }
-    .trade-btn-gold:hover {
-        background-color: #b45309;
     }
     </style>
 """,
@@ -109,8 +104,23 @@ ELITE_WALLETS = {
 }
 
 # ==============================================================================
-# DISCORD WEBHOOK ALERT HELPER
+# ALERT HELPERS (TELEGRAM & DISCORD)
 # ==============================================================================
+def send_telegram_alert(bot_token, chat_id, text):
+  """Sends an instant message via the official Telegram Bot API."""
+  if not bot_token or not chat_id:
+    return False
+  url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+  payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+  try:
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data)
+    with urllib.request.urlopen(req, timeout=5) as resp:
+      return resp.status == 200
+  except Exception:
+    return False
+
+
 def send_discord_alert(webhook_url, title, message, color=0x3B82F6):
   if not webhook_url or not webhook_url.startswith("https://discord.com/api/webhooks/"):
     return False
@@ -162,8 +172,15 @@ def init_db():
     conn.commit()
 
 
-def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
+def log_or_update_signals(
+    actionable_signals,
+    all_mids,
+    webhook_url="",
+    tg_token="",
+    tg_chat_id="",
+):
   init_db()
+  new_signal_triggered = False
   with sqlite3.connect(DB_PATH) as conn:
     cursor = conn.cursor()
     cursor.execute(
@@ -215,6 +232,7 @@ def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
             (coin,),
         )
         if not cursor.fetchone():
+          new_signal_triggered = True
           now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
           cursor.execute(
               """
@@ -230,6 +248,7 @@ def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
                   sig.get("Conviction", ""),
               ),
           )
+          # Send Discord alert
           if webhook_url:
             send_discord_alert(
                 webhook_url,
@@ -239,7 +258,18 @@ def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
                 f" ${curr_px:,.2f}\n• **Hyperliquid Link:**"
                 f" https://app.hyperliquid.xyz/trade/{coin}",
             )
+          # Send Telegram alert
+          if tg_token and tg_chat_id:
+            msg = (
+                f"🚨 *New Whale Signal: {coin} {sig.get('Signal', '')}*\n\n"
+                f"• *Search Ticker:* `{coin}`\n"
+                f"• *Conviction:* {sig.get('Conviction', '')}\n"
+                f"• *Entry Price:* ${curr_px:,.2f}\n"
+                f"• [Open Trade on Hyperliquid](https://app.hyperliquid.xyz/trade/{coin})"
+            )
+            send_telegram_alert(tg_token, tg_chat_id, msg)
     conn.commit()
+  return new_signal_triggered
 
 
 def get_performance_data():
@@ -431,7 +461,7 @@ def score_trade_quality(c):
 
 
 # ==============================================================================
-# SIDEBAR CONTROLS & WEBHOOKS
+# SIDEBAR CONTROLS & ALERTS
 # ==============================================================================
 with st.sidebar:
   st.header("⚙️ Radar Controls")
@@ -444,6 +474,7 @@ with st.sidebar:
   st.header("⏱️ Live Auto-Refresh")
   auto_refresh = st.toggle("Enable Hands-Free Auto Refresh", value=False)
   refresh_seconds = st.selectbox("Interval", [30, 60, 120], index=1)
+  play_audio = st.checkbox("Play Audio Chime on Signal", value=True)
 
   if auto_refresh:
     st.caption(f"⚡ Live: Refreshing every {refresh_seconds}s automatically.")
@@ -464,25 +495,58 @@ with st.sidebar:
     st.rerun()
 
   st.divider()
-  st.header("🔔 Discord Webhook Alerts")
-  discord_webhook = st.text_input(
-      "Discord Webhook URL",
-      type="password",
-      placeholder="https://discord.com/api/webhooks/...",
+  st.header("🔔 Live Alert Channels")
+
+  alert_channel = st.radio(
+      "Choose Alert Service", ["Telegram Bot", "Discord Webhook"]
   )
-  if st.button("🔔 Send Test Alert"):
-    if discord_webhook:
-      success = send_discord_alert(
-          discord_webhook,
-          "⚡ Hyperliquid Radar Alert Test",
-          "Your Discord alerts are successfully linked and working!",
-      )
-      if success:
-        st.success("Test alert sent successfully!")
+
+  tg_token = ""
+  tg_chat_id = ""
+  discord_webhook = ""
+
+  if alert_channel == "Telegram Bot":
+    tg_token = st.text_input(
+        "Telegram Bot Token",
+        type="password",
+        placeholder="123456:ABC-DEF...",
+        help="Get from @BotFather on Telegram",
+    )
+    tg_chat_id = st.text_input(
+        "Telegram Chat ID", placeholder="@my_channel or 12345678"
+    )
+    if st.button("🔔 Send Test Telegram Alert"):
+      if tg_token and tg_chat_id:
+        success = send_telegram_alert(
+            tg_token,
+            tg_chat_id,
+            "⚡ *Hyperliquid Whale Radar:* Telegram alerts linked and working!",
+        )
+        if success:
+          st.success("Test message delivered to Telegram!")
+        else:
+          st.error("Failed to deliver. Check your Bot Token & Chat ID.")
       else:
-        st.error("Failed to deliver alert. Check your Webhook URL.")
-    else:
-      st.warning("Please paste a Discord Webhook URL first.")
+        st.warning("Please enter both Bot Token and Chat ID.")
+  else:
+    discord_webhook = st.text_input(
+        "Discord Webhook URL",
+        type="password",
+        placeholder="https://discord.com/api/webhooks/...",
+    )
+    if st.button("🔔 Send Test Discord Alert"):
+      if discord_webhook:
+        success = send_discord_alert(
+            discord_webhook,
+            "⚡ Hyperliquid Radar Alert Test",
+            "Your Discord alerts are successfully linked and working!",
+        )
+        if success:
+          st.success("Test alert sent successfully!")
+        else:
+          st.error("Failed to deliver alert. Check your Webhook URL.")
+      else:
+        st.warning("Please paste a Discord Webhook URL first.")
 
 # ==============================================================================
 # DATA LOAD & PROCESSING
@@ -547,12 +611,27 @@ if not df_positions.empty and "Coin" in df_positions.columns:
           "Conviction": f"{conviction*100:.0f}%",
       })
 
-log_or_update_signals(actionable_signals, mids, webhook_url=discord_webhook)
+new_signal_fired = log_or_update_signals(
+    actionable_signals,
+    mids,
+    webhook_url=discord_webhook,
+    tg_token=tg_token,
+    tg_chat_id=tg_chat_id,
+)
 df_history = get_performance_data()
 
-# ==============================================================================
-# SLIDER-AWARE FILTERING (Directly connects Sidebar controls to the Top Setups)
-# ==============================================================================
+# Audio chime notification if enabled
+if new_signal_fired and play_audio:
+  components.html(
+      """
+        <audio autoplay>
+          <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mp3">
+        </audio>
+    """,
+      height=0,
+  )
+
+# Filter eligible setups based on sliders
 eligible_trades = [
     c
     for c in coin_summaries
@@ -560,7 +639,6 @@ eligible_trades = [
     and c["Raw_Conviction"] >= consensus_threshold
 ]
 
-# Update sidebar live feedback
 with st.sidebar:
   st.markdown(
       f"**Filter Status:** `{len(eligible_trades)} of {len(coin_summaries)}`"
@@ -606,7 +684,7 @@ with tab1:
     st.warning(
         f"⚠️ No active coins currently meet your criteria (Requires ≥"
         f" {min_traders} Whale(s) with ≥ {int(consensus_threshold*100)}%"
-        " Consensus). Try adjusting your sidebar sliders."
+        " Consensus). Try lowering your sidebar sliders."
     )
   else:
     best_trades = sorted(
