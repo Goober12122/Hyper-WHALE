@@ -335,7 +335,6 @@ def scan_single_wallet(info, address, all_mids):
           liq_str = f"${liq_px:,.2f} ({liq_dist:.1f}% - {liq_safety})"
         else:
           liq_str = "None (Low Lev/Spot)"
-          liq_dist = 999.0
 
         position_value = abs(size) * curr_px
         roi_pct = (
@@ -618,34 +617,61 @@ with tab1:
         )
 
   # ==========================================================================
-  # FEATURE: EMBEDDED TRADINGVIEW LIVE CHART FOR #1 RANKED COIN
+  # FEATURE: EMBEDDED TRADINGVIEW LIVE CHART WITH DYNAMIC ASSET SELECTOR
   # ==========================================================================
-  if best_trades:
-    top_coin = best_trades[0]["Coin"]
-    st.markdown(f"#### 📈 Live Technical Chart: **{top_coin}/USDT**")
+  if not df_positions.empty or best_trades:
+    st.markdown("#### 📈 Live Technical Price Chart")
+
+    # Extract all coins available in the market
+    active_coins = sorted(
+        list(
+            set(
+                [t["Coin"] for t in best_trades]
+                + list(df_positions["Coin"].unique())
+            )
+        )
+    )
+
+    # Let user select which coin to inspect
+    selected_chart_coin = st.selectbox(
+        "Choose an asset to load on the TradingView chart:",
+        options=active_coins,
+        index=0,
+        key="chart_asset_selector",
+    )
+
+    # Clean ticker name for TradingView (strip prefixes like xyz:)
+    clean_symbol = selected_chart_coin.replace("xyz:", "").upper()
+    tv_symbol = f"BINANCE:{clean_symbol}USDT"
+    unique_dom_id = f"tv_{clean_symbol}_{int(time.time()*1000)}"
+
     tv_widget = f"""
-        <div class="tradingview-widget-container" style="height: 380px; width: 100%;">
-          <div id="tradingview_chart" style="height: 380px;"></div>
+        <div class="tradingview-widget-container" style="height: 420px; width: 100%;">
+          <div id="{unique_dom_id}" style="height: 420px;"></div>
           <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
           <script type="text/javascript">
           new TradingView.widget({{
             "autosize": true,
-            "symbol": "BINANCE:{top_coin}USDT",
+            "symbol": "{tv_symbol}",
             "interval": "60",
             "timezone": "Etc/UTC",
             "theme": "dark",
             "style": "1",
             "locale": "en",
+            "toolbar_bg": "#131722",
             "enable_publishing": false,
             "hide_top_toolbar": false,
             "hide_legend": false,
             "save_image": false,
-            "container_id": "tradingview_chart"
+            "container_id": "{unique_dom_id}"
           }});
           </script>
         </div>
         """
-    components.html(tv_widget, height=390)
+    # Using dynamic key forces Streamlit to cleanly re-create the iframe whenever the coin changes!
+    components.html(
+        tv_widget, height=430, key=f"tv_embed_frame_{selected_chart_coin}"
+    )
 
   st.divider()
 
