@@ -320,7 +320,6 @@ def scan_single_wallet(info, address, all_mids):
 
       if size != 0:
         coin = pos.get("coin")
-        # Ensure coin is a valid non-empty string
         if not coin or not isinstance(coin, str):
           continue
 
@@ -628,7 +627,6 @@ with tab1:
   # ==========================================================================
   st.markdown("#### 📈 Live Technical Price Chart")
 
-  # Guaranteed fallback so active_coins is never empty or contains None
   active_coins = ["BTC", "ETH", "SOL"]
   if best_trades:
     active_coins.extend(
@@ -689,9 +687,8 @@ with tab1:
       </script>
     </div>
     """
-  components.html(
-      tv_widget, height=430, key=f"tv_embed_frame_{selected_chart_coin}"
-  )
+  # Corrected: components.html does not take a key parameter
+  components.html(tv_widget, height=430)
 
   st.divider()
 
