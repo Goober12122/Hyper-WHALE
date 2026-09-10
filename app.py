@@ -50,6 +50,35 @@ st.markdown(
         border-radius: 6px;
         font-weight: bold;
     }
+    .trade-btn {
+        display: inline-block;
+        background-color: #2563eb;
+        color: white !important;
+        padding: 7px 14px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: bold;
+        font-size: 0.9rem;
+        margin-top: 10px;
+    }
+    .trade-btn:hover {
+        background-color: #1d4ed8;
+    }
+    .trade-btn-gold {
+        display: inline-block;
+        background-color: #d97706;
+        color: white !important;
+        padding: 6px 12px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: bold;
+        font-size: 0.85rem;
+        margin-top: 8px;
+        margin-right: 8px;
+    }
+    .trade-btn-gold:hover {
+        background-color: #b45309;
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -83,7 +112,6 @@ ELITE_WALLETS = {
 # DISCORD WEBHOOK ALERT HELPER
 # ==============================================================================
 def send_discord_alert(webhook_url, title, message, color=0x3B82F6):
-  """Dispatches a formatted embed alert to a Discord webhook URL."""
   if not webhook_url or not webhook_url.startswith("https://discord.com/api/webhooks/"):
     return False
   payload = {
@@ -200,14 +228,13 @@ def log_or_update_signals(actionable_signals, all_mids, webhook_url=""):
                   sig["Conviction"],
               ),
           )
-          # Send instant webhook notification
           if webhook_url:
             send_discord_alert(
                 webhook_url,
                 f"🚨 New Whale Signal: {coin} {sig['Signal']}",
-                f"• **Conviction:** {sig['Conviction']}\n• **Entry Price:**"
-                f" ${curr_px:,.2f}\n• **Target:** +2.0% Take Profit | -1.5%"
-                " Stop Loss",
+                f"• **Search Ticker:** `{coin}`\n• **Conviction:**"
+                f" {sig['Conviction']}\n• **Entry Price:** ${curr_px:,.2f}\n•"
+                f" **Hyperliquid Link:** https://app.hyperliquid.xyz/trade/{coin}",
             )
     conn.commit()
 
@@ -327,6 +354,7 @@ def scan_single_wallet(info, address, all_mids):
             "Full Address": address,
             "Trader Label": trader_label,
             "Coin": coin,
+            "Trade Link": f"https://app.hyperliquid.xyz/trade/{coin}",
             "Side": side,
             "Size": abs(size),
             "Entry Price": entry_px,
@@ -401,7 +429,7 @@ def score_trade_quality(c):
 # SIDEBAR CONTROLS & WEBHOOKS
 # ==============================================================================
 with st.sidebar:
-  st.header("⚙️ Radar Settings")
+  st.header("⚙️ Radar Controls")
 
   min_traders = st.slider("Min Whales in Position", 1, 5, 1)
   consensus_threshold = st.slider("Consensus Threshold (%)", 50, 100, 60) / 100
@@ -501,6 +529,7 @@ if not df_positions.empty:
         "Raw_PnL": total_pnl,
         "Raw_Whales": total_whales,
         "Raw_Conviction": conviction,
+        "Trade_URL": f"https://app.hyperliquid.xyz/trade/{coin}",
     }
 
     item["Quality_Score"] = score_trade_quality(item)
@@ -546,8 +575,8 @@ with tab1:
   # ==========================================================================
   st.subheader("🔥 Top 3 Best-Looking Whale Setups")
   st.caption(
-      "Ranked by AI Quality Score: evaluates positive momentum, agreement, and"
-      " avoids deep drawdown traps."
+      "Highest quality consensus setups with direct one-click trade access on"
+      " Hyperliquid."
   )
 
   best_trades = []
@@ -565,19 +594,24 @@ with tab1:
             "badge-long" if t["Majority Side"] == "LONG" else "badge-short"
         )
         roi_color = "#34d399" if t["Raw_ROI"] >= 0 else "#f87171"
+        hl_url = t["Trade_URL"]
 
         st.markdown(
             f"""
                 <div class="top-trade-card">
                     <h3 style="margin-top: 0;">#{idx+1} {t['Coin']} <span class="{side_color}">{t['Majority Side']}</span></h3>
-                    <p style="font-size: 1.1rem; margin-bottom: 8px;">
-                        <b>Score:</b> <span style="color: #60a5fa; font-weight: bold;">{t['Quality_Score']}/100</span>
+                    <p style="font-size: 0.95rem; margin-bottom: 8px;">
+                        <b>🔍 Search Ticker:</b> <code style="font-size: 1.05rem; color: #fbbf24; font-weight: bold;">{t['Coin']}</code> (Perpetuals)
+                    </p>
+                    <p style="font-size: 1.1rem; margin-bottom: 6px;">
+                        <b>Quality Score:</b> <span style="color: #60a5fa; font-weight: bold;">{t['Quality_Score']}/100</span>
                     </p>
                     <p style="margin: 4px 0;"><b>🐋 Whales:</b> <code>{t['Whales in Trade']}</code></p>
                     <p style="margin: 4px 0;"><b>🎯 Avg Entry:</b> <code>{t['Avg Entry']}</code></p>
                     <p style="margin: 4px 0;"><b>📈 Current Px:</b> <code>{t['Current Price']}</code></p>
                     <p style="margin: 4px 0;"><b>💰 Volume:</b> <code>{t['Total Volume ($)']}</code></p>
                     <p style="margin: 4px 0;"><b>💵 PnL:</b> <span style="color: {roi_color}; font-weight: bold;">{t['Group PnL ($)']} ({t['Group ROI (%)']})</span></p>
+                    <a href="{hl_url}" target="_blank" class="trade-btn">🚀 Trade {t['Coin']} on Hyperliquid →</a>
                 </div>
                 """,
             unsafe_allow_html=True,
@@ -637,21 +671,26 @@ with tab1:
         side_color = "badge-long" if row["Side"] == "LONG" else "badge-short"
         roi_color = "#34d399" if row["ROI (%)"] >= 0 else "#f87171"
         explorer_url = f"https://app.hyperliquid.xyz/explorer/address/{row['Full Address']}"
+        coin_trade_url = f"https://app.hyperliquid.xyz/trade/{row['Coin']}"
 
         st.markdown(
             f"""
                 <div class="trader-trade-card">
                     <h4 style="margin-top: 0; color: #fbbf24;">{row['Trader Label']}</h4>
-                    <p style="font-size: 1.15rem; margin-bottom: 6px;">
+                    <p style="font-size: 1.15rem; margin-bottom: 4px;">
                         <b>{row['Coin']}</b> <span class="{side_color}">{row['Side']} {row['Leverage']}</span>
+                    </p>
+                    <p style="font-size: 0.9rem; margin-bottom: 6px;">
+                        <b>🔍 Search Ticker:</b> <code style="color: #60a5fa; font-weight: bold;">{row['Coin']}</code>
                     </p>
                     <p style="margin: 4px 0;"><b>🎯 Entry:</b> <code>${row['Entry Price']:,.2f}</code> | <b>Current:</b> <code>${row['Current Price']:,.2f}</code></p>
                     <p style="margin: 4px 0;"><b>⚠️ Liquidation:</b> <code>{row['Liquidation Gauge']}</code></p>
                     <p style="margin: 4px 0;"><b>💰 Trade Value:</b> <code>${row['Position Value ($)']:,.2f}</code></p>
                     <p style="margin: 4px 0;"><b>💵 Trader PnL:</b> <span style="color: {roi_color}; font-weight: bold;">${row['Unrealized PnL ($)']:+,.2f} ({row['ROI (%)']:+.2f}%)</span></p>
-                    <p style="margin: 8px 0 0 0;">
-                        <a href="{explorer_url}" target="_blank" style="color: #60a5fa; text-decoration: none; font-size: 0.85rem;">🔗 View Wallet on Hyperliquid →</a>
-                    </p>
+                    <div style="margin-top: 8px;">
+                        <a href="{coin_trade_url}" target="_blank" class="trade-btn-gold">🚀 Open {row['Coin']} Chart →</a>
+                        <a href="{explorer_url}" target="_blank" style="color: #60a5fa; text-decoration: none; font-size: 0.85rem; vertical-align: middle;">🔗 View Wallet →</a>
+                    </div>
                 </div>
                 """,
             unsafe_allow_html=True,
@@ -668,6 +707,7 @@ with tab1:
         sorted(coin_summaries, key=lambda x: x["Raw_Volume"], reverse=True)
     )[[
         "Coin",
+        "Trade_URL",
         "Majority Side",
         "Quality_Score",
         "Current Price",
@@ -714,6 +754,7 @@ with tab1:
         filtered_df[[
             "Wallet",
             "Coin",
+            "Trade Link",
             "Side",
             "Entry Price",
             "Current Price",
