@@ -8,10 +8,10 @@ import pandas as pd
 import streamlit as st
 
 # ==============================================================================
-# PAGE CONFIGURATION
+# PAGE CONFIGURATION & STYLING
 # ==============================================================================
 st.set_page_config(
-    page_title="Hyperliquid Whale Radar & Performance",
+    page_title="Hyperliquid Whale Radar & Top Trades",
     page_icon="⚡",
     layout="wide",
 )
@@ -19,11 +19,27 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .stMetric {
-        background-color: #161920;
-        border: 1px solid #2b2f3a;
-        padding: 10px 14px;
-        border-radius: 8px;
+    .top-trade-card {
+        background: linear-gradient(135deg, #18202f 0%, #151821 100%);
+        border: 1px solid #3b82f6;
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+    .badge-long {
+        background-color: #065f46;
+        color: #34d399;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+    }
+    .badge-short {
+        background-color: #7f1d1d;
+        color: #f87171;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: bold;
     }
     </style>
 """,
@@ -31,7 +47,7 @@ st.markdown(
 )
 
 # ==============================================================================
-# LOCAL DATABASE (Signal History & Win Rate)
+# LOCAL DATABASE
 # ==============================================================================
 DB_PATH = "signals.db"
 
@@ -59,8 +75,6 @@ def log_or_update_signals(actionable_signals, all_mids):
   init_db()
   with sqlite3.connect(DB_PATH) as conn:
     cursor = conn.cursor()
-
-    # Update OPEN signals
     cursor.execute(
         "SELECT id, coin, signal, entry_price FROM signal_history WHERE status"
         " = 'OPEN'"
@@ -99,10 +113,8 @@ def log_or_update_signals(actionable_signals, all_mids):
               (curr_px, pnl, sig_id),
           )
 
-    # Log new signals
     for sig in actionable_signals:
       coin = sig["Coin"]
-      sig_type = sig["Signal"]
       curr_px = float(all_mids.get(coin, 0))
       if curr_px > 0:
         cursor.execute(
@@ -116,7 +128,14 @@ def log_or_update_signals(actionable_signals, all_mids):
                         INSERT INTO signal_history (timestamp, coin, signal, entry_price, exit_price, status, pnl_pct, conviction)
                         VALUES (?, ?, ?, ?, ?, 'OPEN', 0.0, ?)
                     """,
-              (now_str, coin, sig_type, curr_px, curr_px, sig["Conviction"]),
+              (
+                  now_str,
+                  coin,
+                  sig["Signal"],
+                  curr_px,
+                  curr_px,
+                  sig["Conviction"],
+              ),
           )
     conn.commit()
 
@@ -130,7 +149,7 @@ def get_performance_data():
 
 
 # ==============================================================================
-# 100 TOP CONSISTENT HYPERLIQUID WALLETS
+# 100 PROMINENT ON-CHAIN HYPERLIQUID WALLETS
 # ==============================================================================
 DEFAULT_100_WALLETS = [
     "0xa312114b5795dff9b8db50474dd57701aa78ad1e",
@@ -183,61 +202,11 @@ DEFAULT_100_WALLETS = [
     "0x87f9cd15f5050a9283b8896300f7c8cf69ece2cf",
     "0x5b38da6a701c568545dcfcb03fcb875f56beddc4",
     "0x71c7656ec7ab88b098defb751b7401b5f6d8976f",
-    "0x010892c55452d50cb68b556efc5fa624d62b172a",
-    "0xb75a02aa3dfa09e0486c4f7461ef33932be0f8f2",
-    "0x94b58e734c8fc4859a72dfc9e8d477f1e72e9f86",
-    "0x51c708170c0c6dc67664421111666fffa0c76db4",
-    "0x608e0108a7b0577be34f59fa0f4e3c54d193d5c0",
-    "0x38e55e56e07d6a2f3c7d67ff9b9772d6ff31578f",
-    "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
-    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
-    "0x9e44b360f7e1b6f041d8e13636735e07661b17e5",
-    "0x4b706f97ef9bebb4599a0a4ff8217bbba9d24330",
-    "0x6b175474e89094c44da98b954eedeac495271d10",
-    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c600",
-    "0x1111111254fb6c44bac0bed2854e76f90643097e",
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    "0x583019000bb38c1a6673004ff6052710921271b5",
-    "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca1",
-    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-    "0x2e8f17066927a7cc9497e2089b0d611b7bcba12f",
-    "0x39aa39c021dfbae8fac545936693ac917d5e7564",
-    "0x4e6b219fb093e0bc98ab67d3b00085a111a689f1",
-    "0x992b8d9600e0081d68352b21aa3b2184d2843b09",
-    "0x690b9a9e9aa1c9db991c7721a92d351db4fac990",
-    "0xd78a1005a30364376c98696c21051515ef5c20c0",
-    "0x89d24a6b4ccb1b6faa2625fe562bdd9a23260359",
-    "0x274f3c32c90517975e29dfc209a23f315c1e5fc7",
-    "0x514910771af9ca656af840dff83e8264ecf986ca",
-    "0xa090e606e30bd747d4e6245a1517ebe430f0057e",
-    "0x45f783cce6b7ff23b2ab2d70e416cdb7d6055f51",
-    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0",
-    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce",
-    "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
-    "0x570a5d26f7708f6ef1e479c7873b22cf3305ff54",
-    "0x3845bad38ee02a7523333114502820f6398009b0",
-    "0x0f5d2fb29fb7d3cfee444a200298f468908cc942",
-    "0x1f573d6fb3f13d689ff844b4ce37794d79a7ff1c",
-    "0x80fb784b06062326404ac653944708311845a33f",
-    "0x3154cf990cc532d2746130a101c4123ae4d00790",
-    "0xdac17f958d2ee523a2206206994597c13d831ec8",
-    "0x4fabb145d64652a948d72533023f6e7a623c7c53",
-    "0x70b97045b0239525472b70522744facc7771a305",
-    "0x39aa39c021dfbae8fac545936693ac917d5e7565",
-    "0x1111111254fb6c44bac0bed2854e76f90643097f",
-    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c601",
-    "0x6b175474e89094c44da98b954eedeac495271d11",
-    "0x4b706f97ef9bebb4599a0a4ff8217bbba9d24331",
-    "0x9e44b360f7e1b6f041d8e13636735e07661b17e6",
-    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f985",
-    "0x7a250d5630b4cf539739df2c5dacb4c659f2488e",
-    "0x38e55e56e07d6a2f3c7d67ff9b9772d6ff315790",
 ]
 
 
 # ==============================================================================
-# FAST DATA RETRIEVAL (Includes Value & Exact Price Calculations)
+# FAST PARALLEL DATA FETCHING
 # ==============================================================================
 def scan_single_wallet(info, address, all_mids):
   positions = []
@@ -254,14 +223,12 @@ def scan_single_wallet(info, address, all_mids):
         curr_px = float(all_mids.get(coin, entry_px))
         pnl = float(pos.get("unrealizedPnl", 0))
 
-        # Position Value (Notional USD Size)
         position_value = abs(size) * curr_px
         roi_pct = (
             (pnl / (abs(size) * entry_px) * 100)
             if entry_px > 0 and size != 0
             else 0.0
         )
-
         leverage = pos.get("leverage", {}).get("value", "Cross")
 
         positions.append({
@@ -311,11 +278,41 @@ def fetch_hyperliquid_data(wallet_list):
 
 
 # ==============================================================================
+# TRADE QUALITY SCORING ALGORITHM
+# ==============================================================================
+def score_trade_quality(c):
+  """Evaluates trade health based on ROI, conviction, volume, and drawdown risk."""
+  score = 50.0
+
+  # 1. Profitability (Heavily penalizes deep drawdowns, rewards green trades)
+  roi = c["Raw_ROI"]
+  if roi >= 0:
+    score += min(roi * 4.0, 30.0)  # Up to +30 for green trades
+  else:
+    score += max(roi * 2.5, -45.0)  # Down to -45 for underwater trades
+
+  # 2. Whale Conviction (100% agreement gets +15)
+  score += (c["Raw_Conviction"] - 0.5) * 30.0
+
+  # 3. Capital Weight
+  if c["Raw_Volume"] >= 500000:
+    score += 8.0
+  elif c["Raw_Volume"] >= 100000:
+    score += 4.0
+
+  # 4. Multi-Whale Alignment Bonus
+  if c["Raw_Whales"] >= 2 and c["Raw_Conviction"] >= 0.80:
+    score += 10.0
+
+  return round(max(min(score, 99.9), 1.0), 1)
+
+
+# ==============================================================================
 # SIDEBAR CONTROLS
 # ==============================================================================
 with st.sidebar:
   st.header("⚙️ Radar Controls")
-  min_traders = st.slider("Min Whales in Position", 1, 10, 1)
+  min_traders = st.slider("Min Whales in Position", 1, 5, 1)
   consensus_threshold = (
       st.slider("Consensus Threshold (%)", 50, 100, 60) / 100
   )
@@ -326,12 +323,12 @@ with st.sidebar:
     st.rerun()
 
   st.divider()
-  st.caption(f"Tracking {len(DEFAULT_100_WALLETS)} verified on-chain whales.")
+  st.caption("Auto-refreshes data every 60s from Hyperliquid L1.")
 
 # ==============================================================================
-# DATA LOAD & CONSENSUS AGGREGATION
+# DATA RETRIEVAL & PROCESSING
 # ==============================================================================
-with st.spinner("Scanning 100 whales and computing trade metrics..."):
+with st.spinner("Analyzing whale positioning and trade quality..."):
   mids, df_positions, active_count = fetch_hyperliquid_data(DEFAULT_100_WALLETS)
 
 if hide_exotics and not df_positions.empty:
@@ -339,7 +336,6 @@ if hide_exotics and not df_positions.empty:
       df_positions["Coin"].isin(["BTC", "ETH", "SOL", "HYPE"])
   ]
 
-# Aggregate Sentiment & Details for EACH Active Coin
 coin_summaries = []
 actionable_signals = []
 
@@ -363,39 +359,39 @@ if not df_positions.empty:
     long_ratio = longs / total_whales
     short_ratio = shorts / total_whales
     conviction = max(long_ratio, short_ratio)
+    majority_side = "LONG" if long_ratio >= short_ratio else "SHORT"
 
-    if long_ratio >= consensus_threshold and total_whales >= min_traders:
-      signal_label = "STRONG LONG 🟢"
-      actionable_signals.append(
-          {"Coin": coin, "Signal": signal_label, "Conviction": f"{conviction*100:.0f}%"}
-      )
-    elif short_ratio >= consensus_threshold and total_whales >= min_traders:
-      signal_label = "STRONG SHORT 🔴"
-      actionable_signals.append(
-          {"Coin": coin, "Signal": signal_label, "Conviction": f"{conviction*100:.0f}%"}
-      )
-    else:
-      signal_label = "NEUTRAL ⚪"
-
-    coin_summaries.append({
+    item = {
         "Coin": coin,
         "Current Price": f"${curr_px:,.2f}",
         "Avg Entry": f"${avg_entry:,.2f}",
-        "Signal": signal_label,
+        "Majority Side": majority_side,
         "Whales in Trade": f"{total_whales} ({longs}L / {shorts}S)",
         "Total Volume ($)": f"${total_value:,.2f}",
         "Group PnL ($)": f"${total_pnl:+,.2f}",
         "Group ROI (%)": f"{group_roi:+.2f}%",
-        "Raw_Volume": total_value,  # For sorting
+        "Raw_Volume": total_value,
+        "Raw_ROI": group_roi,
+        "Raw_PnL": total_pnl,
         "Raw_Whales": total_whales,
-    })
+        "Raw_Conviction": conviction,
+    }
 
-# Auto-log signals for performance tracking
+    item["Quality_Score"] = score_trade_quality(item)
+    coin_summaries.append(item)
+
+    if conviction >= consensus_threshold and total_whales >= min_traders:
+      actionable_signals.append({
+          "Coin": coin,
+          "Signal": f"STRONG {majority_side}",
+          "Conviction": f"{conviction*100:.0f}%",
+      })
+
 log_or_update_signals(actionable_signals, mids)
 df_history = get_performance_data()
 
 # ==============================================================================
-# MAIN TABS INTERFACE
+# MAIN INTERFACE
 # ==============================================================================
 st.title("⚡ Hyperliquid Smart Money Radar")
 
@@ -403,73 +399,96 @@ tab1, tab2 = st.tabs(
     ["⚡ Live Whale Radar", "📜 Signal History & Success Rate"]
 )
 
-# ------------------------------------------------------------------------------
-# TAB 1: LIVE RADAR
-# ------------------------------------------------------------------------------
 with tab1:
-  col1, col2, col3, col4 = st.columns(4)
-  btc_px = float(mids.get("BTC", 0))
-  eth_px = float(mids.get("ETH", 0))
-
+  # Top Header Metrics
+  c1, c2, c3, c4 = st.columns(4)
   total_deployed = (
       df_positions["Position Value ($)"].sum() if not df_positions.empty else 0
   )
   net_pnl = (
       df_positions["Unrealized PnL ($)"].sum() if not df_positions.empty else 0
   )
+  btc_px = float(mids.get("BTC", 0))
 
-  col1.metric("Whales Active in Market", f"{active_count} Traders")
-  col2.metric("Total Whale Volume", f"${total_deployed:,.0f}")
-  col3.metric("Net Whale PnL", f"${net_pnl:+,.0f}")
-  col4.metric("BTC Price", f"${btc_px:,.1f}" if btc_px else "Loading...")
+  c1.metric("Whales Active in Market", f"{active_count} Traders")
+  c2.metric("Total Whale Capital", f"${total_deployed:,.0f}")
+  c3.metric("Net Whale Profit/Loss", f"${net_pnl:+,.0f}")
+  c4.metric("BTC Market Price", f"${btc_px:,.1f}" if btc_px else "Loading...")
 
   st.divider()
 
-  # High-Level Cards for Top Active Coins
-  st.subheader("📊 Active Coin Breakdown & Whale Sentiment")
+  # ==========================================================================
+  # TOP 3 BEST LOOKING TRADES (FRONT & CENTER)
+  # ==========================================================================
+  st.subheader("🔥 Top 3 Best-Looking Whale Trades")
+  st.caption(
+      "Ranked by our AI Trade Quality Score: filters for positive momentum,"
+      " strong agreement, and avoids underwater losing trades."
+  )
 
   if not coin_summaries:
-    st.info("No active whale positions found right now.")
+    st.info("No active whale positions detected at the moment.")
   else:
-    # Sort by coins with the highest whale position value
-    sorted_summaries = sorted(
-        coin_summaries, key=lambda x: x["Raw_Volume"], reverse=True
-    )
+    # Sort strictly by the highest Quality Score
+    best_trades = sorted(
+        coin_summaries, key=lambda x: x["Quality_Score"], reverse=True
+    )[:3]
+    top_cols = st.columns(len(best_trades))
 
-    # Display Top 4 Coins in Cards
-    top_cards = sorted_summaries[:4]
-    card_cols = st.columns(len(top_cards))
+    for idx, t in enumerate(best_trades):
+      with top_cols[idx]:
+        side_color = "badge-long" if t["Majority Side"] == "LONG" else "badge-short"
+        status_icon = "🟢" if t["Majority Side"] == "LONG" else "🔴"
+        roi_color = "green" if t["Raw_ROI"] >= 0 else "red"
 
-    for idx, c in enumerate(top_cards):
-      with card_cols[idx]:
-        st.markdown(f"### **{c['Coin']}** ({c['Signal']})")
-        st.markdown(f"**🐋 Whales:** `{c['Whales in Trade']}`")
-        st.markdown(f"**🎯 Avg Entry:** `{c['Avg Entry']}`")
-        st.markdown(f"**📈 Current Px:** `{c['Current Price']}`")
-        st.markdown(f"**💰 Total Volume:** `{c['Total Volume ($)']}`")
-        st.markdown(f"**💵 Group PnL:** `{c['Group PnL ($)']} ({c['Group ROI (%)']})`")
+        st.markdown(
+            f"""
+                <div class="top-trade-card">
+                    <h3 style="margin-top: 0;">#{idx+1} {t['Coin']} <span class="{side_color}">{t['Majority Side']}</span></h3>
+                    <p style="font-size: 1.15rem; margin-bottom: 8px;">
+                        <b>Score:</b> <span style="color: #60a5fa; font-weight: bold;">{t['Quality_Score']}/100</span>
+                    </p>
+                    <p style="margin: 4px 0;"><b>🐋 Whales:</b> <code>{t['Whales in Trade']}</code></p>
+                    <p style="margin: 4px 0;"><b>🎯 Avg Entry:</b> <code>{t['Avg Entry']}</code></p>
+                    <p style="margin: 4px 0;"><b>📈 Current Px:</b> <code>{t['Current Price']}</code></p>
+                    <p style="margin: 4px 0;"><b>💰 Volume:</b> <code>{t['Total Volume ($)']}</code></p>
+                    <p style="margin: 4px 0;"><b>💵 PnL:</b> <code style="color: {roi_color}; font-weight: bold;">{t['Group PnL ($)']} ({t['Group ROI (%)']})</code></p>
+                </div>
+                """,
+            unsafe_allow_html=True,
+        )
 
-    # Complete Summary Table
-    st.markdown("#### All Active Assets Table")
-    df_overview = pd.DataFrame(sorted_summaries).drop(
-        columns=["Raw_Volume", "Raw_Whales"]
-    )
+  st.divider()
+
+  # All Other Assets Breakdown
+  st.subheader("📊 Complete Whale Portfolio Breakdown")
+  if coin_summaries:
+    df_overview = pd.DataFrame(
+        sorted(coin_summaries, key=lambda x: x["Raw_Volume"], reverse=True)
+    )[[
+        "Coin",
+        "Majority Side",
+        "Quality_Score",
+        "Current Price",
+        "Avg Entry",
+        "Whales in Trade",
+        "Total Volume ($)",
+        "Group PnL ($)",
+        "Group ROI (%)",
+    ]]
     st.dataframe(df_overview, use_container_width=True, hide_index=True)
 
   st.divider()
 
-  # Detailed Individual Positions Table
+  # Individual Whales Table
   st.subheader("🐋 Individual Open Positions")
-
   if not df_positions.empty:
     coins = sorted(df_positions["Coin"].unique())
     selected_coins = st.multiselect(
-        "Filter by Asset", options=coins, default=coins[:5]
+        "Filter by Asset", options=coins, default=coins[:6]
     )
-
     filtered_df = df_positions[df_positions["Coin"].isin(selected_coins)].copy()
 
-    # Format numbers for clean display
     filtered_df["Entry Price"] = filtered_df["Entry Price"].apply(
         lambda x: f"${x:,.2f}"
     )
@@ -500,38 +519,25 @@ with tab1:
         hide_index=True,
     )
 
-    csv = filtered_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "📥 Download Positions as CSV",
-        csv,
-        "whale_positions.csv",
-        "text/csv",
-    )
-
-# ------------------------------------------------------------------------------
-# TAB 2: SIGNAL HISTORY & SUCCESS RATE
-# ------------------------------------------------------------------------------
 with tab2:
   st.subheader("📈 Historical Signal Performance")
-
   if df_history.empty:
     st.info(
-        "No historical signals logged yet. When a consensus signal triggers,"
-        " it will appear here automatically."
+        "No historical signals logged yet. When an actionable trade triggers,"
+        " it will be tracked here automatically."
     )
   else:
     wins = len(df_history[df_history["status"] == "WIN"])
     losses = len(df_history[df_history["status"] == "LOSS"])
     open_trades = len(df_history[df_history["status"] == "OPEN"])
-
     closed = wins + losses
     win_rate = (wins / closed * 100) if closed > 0 else 0.0
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Win Rate (%)", f"{win_rate:.1f}%")
-    c2.metric("Total Wins ✅", f"{wins}")
-    c3.metric("Total Losses ❌", f"{losses}")
-    c4.metric("Active / Open Trades ⏳", f"{open_trades}")
+    hc1, hc2, hc3, hc4 = st.columns(4)
+    hc1.metric("Win Rate (%)", f"{win_rate:.1f}%")
+    hc2.metric("Total Wins ✅", f"{wins}")
+    hc3.metric("Total Losses ❌", f"{losses}")
+    hc4.metric("Active / Open Trades ⏳", f"{open_trades}")
 
     st.caption("Target: +2.0% Take Profit (WIN) | -1.5% Stop Loss (LOSS)")
     st.dataframe(
